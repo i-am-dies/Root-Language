@@ -144,7 +144,7 @@ struct Parser {
 	}
 
 	optional<Frame> parseNode(Frame& nodeFrame) {
-		NodeRule& nodeRule = get<1>(nodeFrame.key.rule).get();
+		NodeRule& nodeRule = get<1>(nodeFrame.key.rule);
 		Node& node = nodeFrame.value = Node();
 
 		for(auto& field : nodeRule.fields) {
@@ -188,7 +188,7 @@ struct Parser {
 	}
 
 	optional<Frame> parseToken(Frame& tokenFrame) {
-		TokenRule& tokenRule = get<2>(tokenFrame.key.rule).get();
+		TokenRule& tokenRule = get<2>(tokenFrame.key.rule);
 		static Token endOfFileToken = { .type = "endOfFile" };
 		usize position = tokenFrame.start();
 		Token& token = position < tokens.size() ? tokens[position] : endOfFileToken;
@@ -220,7 +220,7 @@ struct Parser {
 	}
 
 	optional<Frame> parseVariant(Frame& variantFrame) {
-		VariantRule& variantRule = get<3>(variantFrame.key.rule).get();
+		VariantRule& variantRule = get<3>(variantFrame.key.rule);
 		usize position = variantFrame.start();
 		optional<Frame> greatestFrame;
 
@@ -235,153 +235,146 @@ struct Parser {
 		return greatestFrame;
 	}
 
-	static void rollbackSequenceFrames(Frame& sequenceFrame, vector<Frame>& frames, usize fromIndex) {
-		for(usize i = frames.size(); i > fromIndex; i--) {
-			Frame& frame = frames.back();
+	bool parseDelimitSubsequence(Frame& sequenceFrame, vector<Frame>& frames, usize range[2]) {
+		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
 
-			sequenceFrame.removeSize(frame);
-			frames.pop_back();
-		}
-	}
-
-	static void appendSequenceDirt(Frame& sequenceFrame, vector<Frame>& frames, const Frame& frame) {
-		int start = frame.start(),
-			end = start+max(usize(), frame.size() ? frame.size()-1 : 0);
-
-		if(frames.empty() || frames.back().value.type() != 5 || frames.back().value.get<NodeSP>()->get("type", "") != "unsupported") {
-			frames.emplace_back().value = Node {
-				{"type", "unsupported"},
-				{"range", {
-					{"start", start}
-				}},
-				{"tokens", NodeArray {}}
-			};
+		if(!sequenceRule.delimiter) {
+			return true;
 		}
 
-		Frame& dirtFrame = frames.back();
-		Node& dirtNode = dirtFrame.value;
-
-		sequenceFrame.dirtyTokens += frame.size();
-		dirtFrame.dirtyTokens += frame.size();
-		dirtNode.get<NodeArray&>("tokens").push_back(frame.value);
-		dirtNode.get<Node&>("range")["end"] = end;
-	}
-
-	bool parseSubsequence(Frame& sequenceFrame, vector<Frame>& frames, usize range[2], u8 mode) {
-		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule).get();
-		optional<Rule> rule;
-
-		if(mode == 0) {
-			rule = sequenceRule.rule;
-
-			if(!parseSubsequence(sequenceFrame, frames, sequenceRule.outerDelimitRange, 1)) {
-				return false;
-			}
-		} else
-		if(mode == 1) {
-			if(!sequenceRule.delimiter) {
-				return true;
-			}
-
-			rule = *sequenceRule.delimiter;
-		}
-
+		Rule rule = *sequenceRule.delimiter;
 		usize count = 0,
 			  minCount = range[0],
-			  maxCount = range[1],
-			  framesSize = frames.size(),  // After last successful rule / before last delimiter(s)
-			  scopeLevel = 1;
+			  maxCount = range[1];
 
 		while(sequenceFrame.end() <= tokens.size() && count < maxCount) {
-			Frame& frame = parse({*rule, sequenceFrame.end()});
+			Frame& frame = parse({rule, sequenceFrame.end()});
 
 			if(frame.empty()) {
-				if(mode == 0) {
-					rollbackSequenceFrames(sequenceFrame, frames, framesSize);
-
-					if(!sequenceFrame.permitsDirt) {
-						break;
-					}
-
-					bool handled = false;
-
-					if(sequenceRule.ascender) {
-						Frame& openerFrame = parse({*sequenceRule.ascender, sequenceFrame.end()});
-
-						if(!openerFrame.empty()) {
-							scopeLevel++;
-							appendSequenceDirt(sequenceFrame, frames, openerFrame);
-							handled = true;
-						}
-					}
-
-					if(!handled && sequenceRule.descender) {
-						Frame& closerFrame = parse({*sequenceRule.descender, sequenceFrame.end()});
-
-						if(!closerFrame.empty()) {
-							scopeLevel--;
-							if(scopeLevel == 0) { break; }
-							appendSequenceDirt(sequenceFrame, frames, closerFrame);
-							handled = true;
-						}
-					}
-
-					if(!handled) {
-						Frame& tokenFrame = parse({TokenRule(), sequenceFrame.end(), true});
-
-						appendSequenceDirt(sequenceFrame, frames, tokenFrame);
-						handled = true;
-					}
-
-					if(handled) {
-						framesSize = frames.size();
-					}
-
-					continue;
-				}
-
 				break;
 			}
 
 			sequenceFrame.addSize(frame);
 			count++;
 
-			if(mode == 0 || sequenceRule.delimited) {
+			if(sequenceRule.delimited) {
 				frames.push_back(frame);
-			}
-			if(mode == 0) {
-				framesSize = frames.size();
-
-				if(!parseSubsequence(sequenceFrame, frames, sequenceRule.innerDelimitRange, 1)) {
-					break;
-				}
 			}
 		}
 
-		if(count < minCount) {
-			if(mode == 1) {
-				rollbackSequenceFrames(sequenceFrame, frames, framesSize);
-			}
+		return count >= minCount;
+	}
 
+	bool parseSubsequence(Frame& sequenceFrame, vector<Frame>& frames, usize range[2]) {
+		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
+
+		if(!parseDelimitSubsequence(sequenceFrame, frames, sequenceRule.outerDelimitRange)) {
 			return false;
 		}
 
-		if(mode == 0) {
-			if(!parseSubsequence(sequenceFrame, frames, sequenceRule.outerDelimitRange, 1)) {
-				return false;
+		Rule rule = sequenceRule.rule;
+		usize count = 0,
+			  minCount = range[0],
+			  maxCount = range[1],
+			  rollbackIndex = frames.size(),
+			  scopeLevel = 1;
+		bool atDelimit = false;
+
+		while(sequenceFrame.end() <= tokens.size() && count < maxCount) {
+			// Parse delimited rule frame
+			if(!atDelimit) {
+				Frame& frame = parse({rule, sequenceFrame.end()});
+
+				if(!frame.empty()) {
+					sequenceFrame.addSize(frame);
+					count++;
+					frames.push_back(frame);
+					rollbackIndex = frames.size();
+					atDelimit = true;
+					continue;
+				}
+			} else
+			if(parseDelimitSubsequence(sequenceFrame, frames, sequenceRule.innerDelimitRange)) {
+				atDelimit = false;
+				continue;
 			}
+
+			// Unexpected region reached
+
+			// Rollback rightmost inner delimiter frame(s)
+			for(usize i = frames.size(); i > rollbackIndex; i--) {
+				Frame& frame = frames.back();
+
+				sequenceFrame.removeSize(frame);
+				frames.pop_back();
+			}
+
+			// Parse dirty frame
+			if(!sequenceFrame.permitsDirt) {
+				break;
+			}
+
+			static Frame dummy;
+			Frame& dirtyFrame = (dummy = Frame());
+
+			if(sequenceRule.ascender) {
+				dirtyFrame = parse({*sequenceRule.ascender, sequenceFrame.end()});
+
+				if(!dirtyFrame.empty()) {
+					scopeLevel++;
+				}
+			}
+			if(dirtyFrame.empty() && sequenceRule.descender) {
+				dirtyFrame = parse({*sequenceRule.descender, sequenceFrame.end()});
+
+				if(!dirtyFrame.empty()) {
+					scopeLevel--;
+					if(scopeLevel == 0) { break; }
+				}
+			}
+			if(dirtyFrame.empty()) {
+				dirtyFrame = parse({TokenRule(), sequenceFrame.end(), true});
+			}
+
+			// Append dirty frame
+			int start = dirtyFrame.start(),
+				end = start+max(usize(), dirtyFrame.size() ? dirtyFrame.size()-1 : 0);
+
+			if(
+				frames.empty() ||
+				frames.back().value.type() != 5 ||
+				frames.back().value.get<NodeSP>()->get("type", "") != "unsupported"
+			) {
+				frames.emplace_back().value = Node {
+					{"type", "unsupported"},
+					{"range", {
+						{"start", start}
+					}},
+					{"tokens", NodeArray {}}
+				};
+				rollbackIndex++;
+			}
+
+			Frame& dirtFrame = frames.back();
+			Node& dirtNode = dirtFrame.value;
+
+			sequenceFrame.dirtyTokens += dirtyFrame.size();
+			dirtFrame.dirtyTokens += dirtyFrame.size();  // Rollback support
+			dirtNode.get<NodeArray&>("tokens").push_back(dirtyFrame.value);
+			dirtNode.get<Node&>("range")["end"] = end;
 		}
 
-		return true;
+		return count >= minCount &&
+			   parseDelimitSubsequence(sequenceFrame, frames, sequenceRule.outerDelimitRange);
 	}
 
 	optional<Frame> parseSequence(Frame& sequenceFrame) {
-		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule).get();
+		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
 		vector<Frame> frames;
 
 		sequenceFrame.permitsDirt = sequenceRule.descender.has_value();
 
-		if(!parseSubsequence(sequenceFrame, frames, sequenceRule.range, 0)) {
+		if(!parseSubsequence(sequenceFrame, frames, sequenceRule.range)) {
 			return nullopt;
 		}
 

@@ -85,6 +85,8 @@ public:
 
 	recursive_wrapper& operator=(recursive_wrapper&& other) noexcept = default;
 
+	operator T&() const { return *pointer; }
+
 	T& get() { return *pointer; }
 	T& operator*() { return *pointer; }
 	T* operator->() { return pointer.get(); }
