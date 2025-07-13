@@ -48,10 +48,11 @@ function openSocket(path, token) {
 		client.setNoDelay(true);
 		auth.style.display = 'none';
 
+		send({ receiver: 'server', type: 'notification', action: 'setTokens', senderTokens: ['>'+token] });
 		requestClientsListUpdate();
-		send({ receiver: 'server', type: 'notification', action: 'heartbeat', senderTokens: ['>'+token] });
+		send({ receiver: 'server', type: 'notification', action: 'heartbeat' });
 		clearInterval(heartbeatInterval);
-		heartbeatInterval = setInterval(() => send({ receiver: 'server', type: 'notification', action: 'heartbeat', senderTokens: ['>'+token] }), 7500);
+		heartbeatInterval = setInterval(() => send({ receiver: 'server', type: 'notification', action: 'heartbeat' }), 7500);
 
 		clearInterval(clientsListInterval);
 		clientsListInterval = setInterval(() => requestClientsListUpdate(), 5000);

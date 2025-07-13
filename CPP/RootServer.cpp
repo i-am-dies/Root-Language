@@ -74,7 +74,7 @@ namespace RootServer {
 			unique_lock lock(clientsMutex);
 
 			if(!sharedServer->isRunning() || !clients.contains(clientFD)) {
-				sharedScheduler.cancel(taskID);
+				return sharedScheduler.cancel(taskID);
 			}
 
 			switch(clients[clientFD].state) {
@@ -93,15 +93,12 @@ namespace RootServer {
 	usize scheduleClientHeartbeat() {
 		return sharedScheduler.schedule([](int taskID) {
 			if(!sharedClient->isRunning()) {
-				sharedScheduler.cancel(taskID);
+				return sharedScheduler.cancel(taskID);
 			}
-
-			auto senderTokens = NodeArray(Interface::preferences.tokens.begin(), Interface::preferences.tokens.end());
 
 			Interface::sendToServer({
 				{"type", "notification"},
-				{"action", "heartbeat"},
-				{"senderTokens", senderTokens}
+				{"action", "heartbeat"}
 			});
 		}, 7500, true, true);
 	}
@@ -167,8 +164,8 @@ namespace RootServer {
 								println(sharedServer->getLogPrefix(), "Heartbeat from ", senderFD);
 							#endif
 						}
-
-						// TODO: Replace with explicit registration (tokens should be opaque most of the time and only owned by a server)
+					} else
+					if(action == "setTokens") {
 						if(NodeArraySP senderTokens = message->get("senderTokens")) {
 							sender.tokens = {};
 
@@ -344,6 +341,12 @@ namespace RootServer {
 
 	void handleClientConnect(int) {
 		clientHeartbeatTaskID = scheduleClientHeartbeat();
+
+		Interface::sendToServer({
+			{"type", "notification"},
+			{"action", "setTokens"},
+			{"senderTokens", NodeArray(Interface::preferences.tokens.begin(), Interface::preferences.tokens.end())}
+		});
 	}
 
 	void handleClientDisconnect(int) {

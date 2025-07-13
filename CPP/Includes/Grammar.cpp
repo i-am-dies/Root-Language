@@ -84,9 +84,9 @@ namespace Grammar {
 	// ----------------------------------------------------------------
 
 	// FIXME:
-	// - No parsing messages and their rollback mechanism
-	// - Function parameters can't be stated without label using optionals only (node rule parser does not support optional fields branching)
-	// - Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
+	// [critical    ] Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
+	// [important   ] No parsing messages and their rollback mechanism
+	// [questionable] Function parameters can't be stated without label using optionals only (node rule parser does not support optional fields branching)
 
 	unordered_map<RuleRef, Rule> rules = {
 		{"argument", VariantRule({
@@ -639,7 +639,9 @@ namespace Grammar {
 			{"value", "postfixType"},
 			{nullopt, TokenRule("operatorPostfix", "\\?")}
 		})},
-		{"nilLiteral", TokenRule("keywordNil")},
+		{"nilLiteral", NodeRule({
+			{nullopt, TokenRule("keywordNil")}
+		})},
 		{"observerDeclaration", NodeRule({
 			{"identifier", "observerIdentifier"},
 			{"body", "functionBody", true}

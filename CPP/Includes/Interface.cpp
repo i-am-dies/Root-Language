@@ -259,49 +259,31 @@ namespace Interface {
 			return false;
 		}
 
-		while(preferences.socketPath && !some(preferences.tokens, &isInputToken)) {
-			string token;
+		if(preferences.socketPath) {
+			while(!some(preferences.tokens, &isInputToken)) {
+				string token;
 
-			cout << "Input token: ";
+				cout << "Input token: ";
 
-			getline(cin, token);
+				getline(cin, token);
 
-			if(cin.fail()) {
-				cin.clear();
-			}
+				if(cin.fail()) {
+					cin.clear();
+				}
 
-			if(token.empty()) {
-				preferences.tokens.insert("=");
-			} else
-			if(isInputToken(token)) {
-				preferences.tokens.insert(token);
-			} else {
-				println("Wrong token format, expected input (<) or universal (=) direction specifier as a first character");
+				if(token.empty()) {
+					preferences.tokens.insert("=");
+				} else
+				if(isInputToken(token)) {
+					preferences.tokens.insert(token);
+				} else {
+					println("Wrong token format, expected input (<) or universal (=) direction specifier as a first character");
+				}
 			}
 		}
 
 		return true;
 	}
-
-	// ----------------------------------------------------------------
-
-	/*
-	int main() {
-		const char* path = "/full/path/to/this_binary";  // или используй readlink("/proc/self/exe", ...)
-		char* argv[] = { const_cast<char*>(path), const_cast<char*>("arg1"), nullptr };
-
-		pid_t pid;
-		int status = posix_spawn(&pid, path, nullptr, nullptr, argv, environ);
-		if (status == 0) {
-			waitpid(pid, &status, 0);
-			cout << "Child exited with status: " << status << endl;
-		} else {
-			perror("posix_spawn failed");
-		}
-
-		return 0;
-	}
-	*/
 
 	// ----------------------------------------------------------------
 
