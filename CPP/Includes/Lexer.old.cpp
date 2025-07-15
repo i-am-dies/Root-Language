@@ -14,13 +14,15 @@ struct Lexer {
 		string type,
 			   value;
 		bool trivia,
-			 nonmergeable;
+			 nonmergeable,
+			 generated;
 	};
 
 	string_view code;
 	usize position = 0;
 	deque<Token> tokens;
 	deque<string> states;  // angle - used to distinguish between common operator and generic type's closing >
+						   // brace - used in statements
 						   // parenthesis - used in string expressions
 
 	Lexer(string_view code) : code(code) {}
@@ -41,7 +43,8 @@ struct Lexer {
 			"\"type\": \""+t.type+"\","+
 			"\"value\": \""+escape_json(t.value)+"\","+
 			"\"trivia\": "+(t.trivia ? "true" : "false")+","+
-			"\"nonmergeable\": "+(t.nonmergeable ? "true" : "false")+
+			"\"nonmergeable\": "+(t.nonmergeable ? "true" : "false")+","+
+			"\"generated\": "+(t.generated ? "true" : "false")+
 		"}";
 	}
 
@@ -244,9 +247,26 @@ struct Lexer {
 			addToken(type);
 			removeState("angle", 2);  // Balanced tokens except </> are allowed right after generic types but not inside them
 
+			if(v == "{" && atStatement() && atToken([](Token& t) { return t.type == "whitespace" && t.value.contains("\n"); }, -1)) {
+				addState("statementBody");
+
+				return false;
+			}
+			if(v == "}" && atStatementBody() && !atFutureToken([](Token& t) { return set<string> {"keywordElse", "keywordWhere"}.contains(t.type); })) {
+				addToken("delimiter", ";");
+				token().generated = true;
+				removeState("statement");
+
+				return false;
+			}
+
 			if(atStringExpressions()) {
 				if(v == "(") addState("parenthesis");
 				if(v == ")") removeState("parenthesis");
+			}
+			if(atStatements()) {
+				if(v == "{") addState("brace");
+				if(v == "}") removeState("brace");
 			}
 
 			return false;
@@ -270,29 +290,49 @@ struct Lexer {
 			return false;
 		}},
 		{";", [this](const string& v) {
-			if(atComments() || atString() || token().type == "delimiterExplicit") {
+			if(atComments() || atString()) {
 				helpers_continueString();
 				token().value += v;
 
 				return false;
 			}
 
-			addToken("delimiterExplicit", v);
+			if(token().type == "delimiter" && token().generated) {
+				token().generated = false;
+			} else {
+				addToken("delimiter");
+			}
 
 			return false;
 		}},
 		{"\n", [this](const string& v) {
-			if(atComments() && token().type == "commentBlock" || atString() || token().type == "delimiterImplicit") {
+			if(atComments() && !set<string> {"commentShebang", "commentLine"}.contains(token().type) || atString()) {
 				helpers_continueString();
 				token().value += v;
 
 				return false;
 			}
 
-			addToken("delimiterImplicit", v);
+			if(token().type != "whitespace") {
+				addToken("whitespace", v);
+				token().trivia = true;
 
-			if(atComments()) {
-				removeState("comment");
+				if(atComments()) {
+					removeState("comment");
+				}
+			} else {
+				token().value += v;
+			}
+
+			if(atStatement() && count(token().value.begin(), token().value.end(), '\n') == 1) {
+				auto braceOpen = [](Token& t) { return t.type == "braceOpen"; };
+
+				if(atToken(braceOpen)) {
+					addState("statementBody");
+				} else
+				if(!atState("brace", set<string>()) && !atFutureToken(braceOpen)) {
+					removeState("statement");
+				}
 			}
 
 			return false;
@@ -400,6 +440,12 @@ struct Lexer {
 			}
 			addToken(type, v);
 
+			// Blocks in some statements can be treated by parser like expressions first, which can lead to false inclusion of futher tokens into that expression and late closing
+			// This can be fixed by tracking and closing them beforehand at lexing stage
+			if(some(set<string> {"For", "If", "When", "While"}, [&type](string v) { return type.ends_with(v); })) {
+				addState("statement");
+			}
+
 			return false;
 		}},
 		{regex("."), [this](const string& v) {
@@ -502,6 +548,18 @@ struct Lexer {
 		return atState("stringExpression");
 	}
 
+	inline bool atStatement() {
+		return atState("statement", set<string> {"brace"});
+	}
+
+	inline bool atStatements() {
+		return atState("statement");
+	}
+
+	inline bool atStatementBody() {
+		return atState("statementBody", set<string>());
+	}
+
 	inline bool atAngle() {
 		return atState("angle", set<string>());
 	}
@@ -552,7 +610,6 @@ struct Lexer {
 	/*
 	 * Future-time version of atToken(). Rightmost (at the moment) token is not included in a search.
 	 */
-	/*
 	bool atFutureToken(function<bool(Token&)> conforms) {
 		Save save = getSave();
 		bool result = false;
@@ -578,7 +635,6 @@ struct Lexer {
 
 		return result;
 	}
-	*/
 
 	void addState(const string& type) {
 		states.push_back(type);
@@ -640,7 +696,6 @@ struct Lexer {
 		return false;
 	}
 
-	/*
 	struct Save {
 		usize position;
 		deque<Token> tokens;
@@ -660,7 +715,6 @@ struct Lexer {
 		tokens = save.tokens;
 		states = save.states;
 	}
-	*/
 
 	bool atSubstring(const string& substring) {
 		if(position+substring.size() > code.size()) {

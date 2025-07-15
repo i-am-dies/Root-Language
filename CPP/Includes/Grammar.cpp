@@ -87,6 +87,8 @@ namespace Grammar {
 	// [critical    ] Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
 	// [important   ] No parsing messages and their rollback mechanism
 	// [questionable] Function parameters can't be stated without label using optionals only (node rule parser does not support optional fields branching)
+	// DONE:
+	// [important   ] Many expressions can be broken apart between lines without explicit delimiter, which highly likely means different expressions, but parser does not know that
 
 	unordered_map<RuleRef, Rule> rules = {
 		{"argument", VariantRule({
@@ -228,7 +230,7 @@ namespace Grammar {
 				"variableDeclaration"
 			}),
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"closureExpression", NodeRule({
@@ -243,7 +245,9 @@ namespace Grammar {
 		}, 2)},
 		{"conditionalOperator", NodeRule({
 			{nullopt, TokenRule("operator.*", "\\?")},
+			{nullopt, TokenRule("delimiterImplicit"), true},
 			{"value", "expressionsSequence"},
+			{nullopt, TokenRule("delimiterImplicit"), true},
 			{nullopt, TokenRule("operator.*", ":")}
 		})},
 		{"continueStatement", NodeRule({
@@ -362,7 +366,7 @@ namespace Grammar {
 				"enumerationDeclaration"
 			}),
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"expression", VariantRule({
@@ -441,7 +445,7 @@ namespace Grammar {
 		{"functionStatements", SequenceRule {
 			.rule = "functionStatement",
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"functionType", "[placeholder]"},
@@ -482,6 +486,7 @@ namespace Grammar {
 		{"ifStatement", NodeRule({  // TODO: Closures...
 			{nullopt, TokenRule("keywordIf")},
 			{"condition", "expressionsSequence", true},
+		//	{nullopt, TokenRule("delimiterImplicit"), true},
 			{"then", VariantRule({
 				"functionBody",
 				"expressionsSequence"
@@ -510,11 +515,15 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordIn")},
 			{"value", "expressionsSequence", true}
 		}, 2)},
-		{"infixExpression", VariantRule({
-			"conditionalOperator",
-			"inOperator",
-			"infixOperator"
-		})},
+		{"infixExpression", NodeRule({
+			{nullopt, TokenRule("delimiterImplicit"), true},
+			{"value", VariantRule({
+				"conditionalOperator",
+				"inOperator",
+				"infixOperator"
+			})},
+			{nullopt, TokenRule("delimiterImplicit"), true}
+		}, 2)},
 		{"infixOperator", NodeRule({
 			{"value", TokenRule("operator|operatorInfix", "[^,:]*")}  // Enclosing nodes can use operators from the exceptions list as delimiters
 		})},
@@ -606,7 +615,7 @@ namespace Grammar {
 		{"module", NodeRule({
 			{"statements", SequenceRule {
 				.rule = "functionStatement",
-				.delimiter = TokenRule("delimiter"),
+				.delimiter = TokenRule("delimiter.*"),
 				.descender = TokenRule("endOfFile")
 			}}
 		})},
@@ -628,7 +637,7 @@ namespace Grammar {
 		{"namespaceStatements", SequenceRule {
 			.rule = "declaration",
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"nillableExpression", NodeRule({
@@ -657,7 +666,7 @@ namespace Grammar {
 		{"observersStatements", SequenceRule {
 			.rule = "observerDeclaration",
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"operator", TokenRule("operator.*")},
@@ -670,7 +679,7 @@ namespace Grammar {
 		{"operatorStatements", SequenceRule {
 			.rule = "entry",  // TODO: Special entries
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		/* TODO: Optionals branching
@@ -823,7 +832,7 @@ namespace Grammar {
 				"variableDeclaration"
 			}),
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"protocolType", NodeRule({
@@ -902,7 +911,7 @@ namespace Grammar {
 				"variableDeclaration"
 			}),
 			.ascender = TokenRule("braceOpen"),
-			.delimiter = TokenRule("delimiter"),
+			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
 		{"subscriptArgumentsClause", NodeRule({

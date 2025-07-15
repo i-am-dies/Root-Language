@@ -22,7 +22,7 @@ namespace RootServer {
 		int FD = 0,
 			processID = 0;
 		enum class State {
-			Pending,  // For spawned processes (if dashboard will ever able to have own child processes)
+		//	Pending,  (for spawned processes)
 			Connected,
 			Unresponsive
 		} state;
@@ -342,11 +342,13 @@ namespace RootServer {
 	void handleClientConnect(int) {
 		clientHeartbeatTaskID = scheduleClientHeartbeat();
 
-		Interface::sendToServer({
-			{"type", "notification"},
-			{"action", "setTokens"},
-			{"senderTokens", NodeArray(Interface::preferences.tokens.begin(), Interface::preferences.tokens.end())}
-		});
+		if(!Interface::preferences.tokens.empty()) {
+			Interface::sendToServer({
+				{"type", "notification"},
+				{"action", "setTokens"},
+				{"senderTokens", NodeArray(Interface::preferences.tokens.begin(), Interface::preferences.tokens.end())}
+			});
+		}
 	}
 
 	void handleClientDisconnect(int) {
