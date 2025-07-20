@@ -83,12 +83,7 @@ namespace Grammar {
 
 	// ----------------------------------------------------------------
 
-	// FIXME:
-	// [critical    ] Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
-	// [important   ] No parsing messages and their rollback mechanism
-	// [questionable] Function parameters can't be stated without label using optionals only (node rule parser does not support optional fields branching)
-	// DONE:
-	// [important   ] Many expressions can be broken apart between lines without explicit delimiter, which highly likely means different expressions, but parser does not know that
+	// FIXME: Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
 
 	unordered_map<RuleRef, Rule> rules = {
 		{"argument", VariantRule({
@@ -127,9 +122,7 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordAwait")},
 			{"value", "expression"}
 		})},
-		{"booleanLiteral", NodeRule({
-			{"value", TokenRule("keywordFalse|keywordTrue")}
-		})},
+		{"booleanLiteral", TokenRule("keywordFalse|keywordTrue")},
 		{"breakStatement", NodeRule({
 			{nullopt, TokenRule("keywordBreak")},
 			{"label", "identifier", true}
@@ -395,9 +388,7 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordFallthrough")},
 			{"label", "identifier", true}
 		})},
-		{"floatLiteral", NodeRule({
-			{"value", TokenRule("numberFloat")}
-		})},
+		{"floatLiteral", TokenRule("numberFloat")},
 		{"forStatement", NodeRule({  // TODO: Closures...
 			{nullopt, TokenRule("keywordFor")},
 			{"identifier", "identifier", true},
@@ -480,9 +471,7 @@ namespace Grammar {
 				TokenRule("endOfFile")
 			})}
 		}, 2)},
-		{"identifier", NodeRule({
-			{"value", TokenRule("identifier")}
-		})},
+		{"identifier", TokenRule("identifier")},
 		{"ifStatement", NodeRule({  // TODO: Closures...
 			{nullopt, TokenRule("keywordIf")},
 			{"condition", "expressionsSequence", true},
@@ -524,9 +513,7 @@ namespace Grammar {
 			})},
 			{nullopt, TokenRule("delimiterImplicit"), true}
 		}, 2)},
-		{"infixOperator", NodeRule({
-			{"value", TokenRule("operator|operatorInfix", "[^,:]*")}  // Enclosing nodes can use operators from the exceptions list as delimiters
-		})},
+		{"infixOperator", TokenRule("operator|operatorInfix", "[^,:]*")},  // Enclosing nodes can use operators from the exceptions list as delimiters
 		{"inheritedTypesClause", NodeRule({
 			{nullopt, TokenRule("operator.*", ":")},
 			{"types", SequenceRule {
@@ -558,9 +545,7 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordInout")},
 			{"value", "unionType"},
 		})},
-		{"integerLiteral", NodeRule({
-			{"value", TokenRule("numberInteger")}
-		})},
+		{"integerLiteral", TokenRule("numberInteger")},
 		{"intersectionType", VariantRule({
 			NodeRule({
 				{"subtypes", SequenceRule {
@@ -655,9 +640,7 @@ namespace Grammar {
 			{"identifier", "observerIdentifier"},
 			{"body", "functionBody", true}
 		})},
-		{"observerIdentifier", NodeRule({
-			{"value", TokenRule("identifier", "willGet|get|didGet|willSet|set|didSet|willDelete|delete|didDelete")}
-		})},
+		{"observerIdentifier", TokenRule("identifier", "willGet|get|didGet|willSet|set|didSet|willDelete|delete|didDelete")},
 		{"observersBody", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"statements", "observersStatements"},
@@ -682,7 +665,7 @@ namespace Grammar {
 			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
-		/* TODO: Optionals branching
+		/*
 		{"parameter", NodeRule({
 			{"label", "identifier", true},
 			{"identifier", "identifier"},
@@ -742,9 +725,7 @@ namespace Grammar {
 				{"operator", "postfixOperator"}
 			})
 		})},
-		{"postfixOperator", NodeRule({
-			{"value", TokenRule("operatorPostfix", "[^,:]*")}  // Enclosing nodes can use trailing operators from the exceptions list
-		})},
+		{"postfixOperator", TokenRule("operatorPostfix", "[^,:]*")},  // Enclosing nodes can use trailing operators from the exceptions list
 		{"postfixType", VariantRule({
 			"defaultType",
 			"nillableType",
@@ -777,9 +758,7 @@ namespace Grammar {
 			{"operator", "prefixOperator", true},
 			{"value", "postfixExpression"},
 		}, 2)},
-		{"prefixOperator", NodeRule({
-			{"value", TokenRule("operatorPrefix", "[^&.]*")}  // primaryExpressions can start with operators from the exceptions list
-		})},
+		{"prefixOperator", TokenRule("operatorPrefix", "[^&.]*")},  // primaryExpressions can start with operators from the exceptions list
 		{"primaryExpression", VariantRule({
 			"classExpression",
 			"closureExpression",
@@ -874,9 +853,7 @@ namespace Grammar {
 			}},
 			{nullopt, TokenRule("stringClosed|endOfFile")}
 		})},
-		{"stringSegment", NodeRule({
-			{"value", TokenRule("stringSegment")}
-		})},
+		{"stringSegment", TokenRule("stringSegment")},
 		{"structureBody", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"statements", "structureStatements"},

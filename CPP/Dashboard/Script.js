@@ -393,17 +393,32 @@ function initializeClientInterface(container, receiverFD) {
 
 	tokensTree.onclick = () => {
 		tokensOutput.style.display = '';
-		ASTOutput.style.display = compositesOutput.style.display = 'none';
+		ASTOutput.style.display = 'none';
+		compositesOutput.style.display = 'none';
+
+		tokensTree.setAttribute('current_', '');
+		ASTTree.removeAttribute('current_');
+		compositesTree.removeAttribute('current_');
 	}
 
 	ASTTree.onclick = () => {
-		tokensOutput.style.display = compositesOutput.style.display = 'none';
+		tokensOutput.style.display = 'none';
 		ASTOutput.style.display = '';
+		compositesOutput.style.display = 'none';
+
+		tokensTree.removeAttribute('current_');
+		ASTTree.setAttribute('current_', '');
+		compositesTree.removeAttribute('current_');
 	}
 
 	compositesTree.onclick = () => {
-		tokensOutput.style.display = ASTOutput.style.display = 'none';
+		tokensOutput.style.display = 'none';
+		ASTOutput.style.display = 'none';
 		compositesOutput.style.display = '';
+
+		tokensTree.removeAttribute('current_');
+		ASTTree.removeAttribute('current_');
+		compositesTree.setAttribute('current_', '');
 	}
 
 	interpret.onclick = () => {
@@ -418,7 +433,7 @@ function initializeClientInterface(container, receiverFD) {
 }
 
 function showClient(ID) {
-	[...tabsContainer.children].forEach(c => c.style.textDecoration = c.dataset.id == ID ? 'overline' : '');
+	[...tabsContainer.children].forEach(c => c.dataset.id == ID ? c.setAttribute('current_', '') : c.removeAttribute('current_'));
 	[...clientViews.children].forEach(c => c.style.display = 'none');
 	let view = document.getElementById('client-'+ID);
 	if (view) view.style.display = '';
