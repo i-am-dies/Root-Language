@@ -5,6 +5,7 @@
 namespace Grammar {
 	struct NodeRule;
 	struct TokenRule;
+	struct LogicRule;
 	struct VariantRule;
 	struct SequenceRule;
 
@@ -12,6 +13,7 @@ namespace Grammar {
 	using Rule = variant<RuleRef,
 						 recursive_wrapper<NodeRule>,
 						 recursive_wrapper<TokenRule>,
+						 recursive_wrapper<LogicRule>,
 						 recursive_wrapper<VariantRule>,
 						 recursive_wrapper<SequenceRule>>;
 
@@ -56,6 +58,13 @@ namespace Grammar {
 			return patterns[0] == r.patterns[0] &&
 				   patterns[1] == r.patterns[1];
 		}
+	};
+
+	struct LogicRule {
+		Rule rule;
+		optional<Rule> optionalizer;
+
+		bool operator==(const LogicRule& r) const = default;
 	};
 
 	struct VariantRule : vector<Rule> {};
@@ -122,7 +131,9 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordAwait")},
 			{"value", "expression"}
 		})},
-		{"booleanLiteral", TokenRule("keywordFalse|keywordTrue")},
+		{"booleanLiteral", NodeRule({
+			{"value", TokenRule("keywordFalse|keywordTrue")}
+		})},
 		{"breakStatement", NodeRule({
 			{nullopt, TokenRule("keywordBreak")},
 			{"label", "identifier", true}
@@ -169,7 +180,7 @@ namespace Grammar {
 			{"catch", "catchClause", true}
 		})},
 		{"chainDeclaration", NodeRule({
-			{"modifiers", "modifiers"},  // TODO: Warning: Can only have specific modifier (static).
+			{"modifiers", "modifiers"},
 			{nullopt, TokenRule("identifier", "chain")},
 			{"body", "observersBody", true}
 		})},
@@ -287,7 +298,7 @@ namespace Grammar {
 			{nullopt, TokenRule("operatorPostfix", "!")}
 		})},
 		{"deinitializerDeclaration", NodeRule({
-			{"modifiers", "modifiers"},  // TODO: Warning: Wrong modifier(s).
+			{"modifiers", "modifiers"},
 			{nullopt, TokenRule("identifier", "deinit")},
 			{"body", "functionBody", true}
 		})},
@@ -388,7 +399,9 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordFallthrough")},
 			{"label", "identifier", true}
 		})},
-		{"floatLiteral", TokenRule("numberFloat")},
+		{"floatLiteral", NodeRule({
+			{"value", TokenRule("numberFloat")}
+		})},
 		{"forStatement", NodeRule({  // TODO: Closures...
 			{nullopt, TokenRule("keywordFor")},
 			{"identifier", "identifier", true},
@@ -422,7 +435,12 @@ namespace Grammar {
 		{"functionSignature", NodeRule({
 			{"genericParameters", "genericParametersClause", true},
 			{"parameters", "parametersClause", true},
-			// TODO: Modifiers (-, -, awaits, async, awaits?, async?), presented as ternary logic
+			{"awaits", LogicRule {
+				.rule = TokenRule("keywordAwaits")
+			}, true},
+			{"throws", LogicRule {
+				.rule = TokenRule("keywordThrows")
+			}, true},
 			{"returnType", "returnClause", true}
 		}, 1)},
 		{"functionStatement", VariantRule({
@@ -439,7 +457,19 @@ namespace Grammar {
 			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
-		{"functionType", "[placeholder]"},
+		{"functionType", NodeRule({
+			{"genericParameterTypes", "genericParametersClause", true},
+			{"parameterTypes", "parametersClause"},
+			{"awaits", LogicRule {
+				.rule = TokenRule("keywordAwaits"),
+				.optionalizer = TokenRule("operatorPostfix", "\\?")
+			}, true},
+			{"throws", LogicRule {
+				.rule = TokenRule("keywordThrows"),
+				.optionalizer = TokenRule("operatorPostfix", "\\?")
+			}, true},
+			{"returnType", "returnClause", true}
+		})},
 		{"genericArgument", "type"},
 		{"genericArgumentsClause", NodeRule({
 			{nullopt, TokenRule("operator.*", "<")},
@@ -471,11 +501,12 @@ namespace Grammar {
 				TokenRule("endOfFile")
 			})}
 		}, 2)},
-		{"identifier", TokenRule("identifier")},
+		{"identifier", NodeRule({
+			{"value", TokenRule("identifier")}
+		})},
 		{"ifStatement", NodeRule({  // TODO: Closures...
 			{nullopt, TokenRule("keywordIf")},
 			{"condition", "expressionsSequence", true},
-		//	{nullopt, TokenRule("delimiterImplicit"), true},
 			{"then", VariantRule({
 				"functionBody",
 				"expressionsSequence"
@@ -513,7 +544,9 @@ namespace Grammar {
 			})},
 			{nullopt, TokenRule("delimiterImplicit"), true}
 		}, 2)},
-		{"infixOperator", TokenRule("operator|operatorInfix", "[^,:]*")},  // Enclosing nodes can use operators from the exceptions list as delimiters
+		{"infixOperator", NodeRule({
+			{"value", TokenRule("operator|operatorInfix", "[^,:]*")}  // Enclosing nodes can use operators from the exceptions list as delimiters
+		})},
 		{"inheritedTypesClause", NodeRule({
 			{nullopt, TokenRule("operator.*", ":")},
 			{"types", SequenceRule {
@@ -527,10 +560,12 @@ namespace Grammar {
 			{"value", "expressionsSequence", true}
 		}, 2)},
 		{"initializerDeclaration", NodeRule({
-			{"modifiers", "modifiers"},  // TODO: Warning: Wrong modifier(s).
+			{"modifiers", "modifiers"},
 			{nullopt, TokenRule("identifier", "init")},
-			{"nillable", TokenRule("operator.*", "\\?"), true},  // TODO: Present as bool
-			{"signature", "functionSignature", true},  // TODO: Warning: Signature shouldn't have a return type.
+			{"nillable", LogicRule {
+				.rule = TokenRule("operator.*", "\\?")
+			}, true},
+			{"signature", "functionSignature", true},
 			{"body", "functionBody", true}
 		})},
 		{"inOperator", NodeRule({
@@ -545,7 +580,9 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordInout")},
 			{"value", "unionType"},
 		})},
-		{"integerLiteral", TokenRule("numberInteger")},
+		{"integerLiteral", NodeRule({
+			{"value", TokenRule("numberInteger")}
+		})},
 		{"intersectionType", VariantRule({
 			NodeRule({
 				{"subtypes", SequenceRule {
@@ -640,7 +677,9 @@ namespace Grammar {
 			{"identifier", "observerIdentifier"},
 			{"body", "functionBody", true}
 		})},
-		{"observerIdentifier", TokenRule("identifier", "willGet|get|didGet|willSet|set|didSet|willDelete|delete|didDelete")},
+		{"observerIdentifier", NodeRule({
+			{"value", TokenRule("identifier", "willGet|get|didGet|willSet|set|didSet|willDelete|delete|didDelete")}
+		})},
 		{"observersBody", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"statements", "observersStatements"},
@@ -653,14 +692,32 @@ namespace Grammar {
 			.descender = TokenRule("braceClosed")
 		}},
 		{"operator", TokenRule("operator.*")},
+		{"operatorAssociativity", NodeRule({
+			{nullopt, TokenRule("identifier", "associativity")},
+			{nullopt, TokenRule("operator.*", ":")},
+			{"value", TokenRule("identifier", "left|right|none")}
+		})},
 		{"operatorBody", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"statements", "operatorStatements"},
 			{nullopt, TokenRule("braceClosed|endOfFile")}
 		})},
-		{"operatorDeclaration", "[placeholder]"},
+		{"operatorDeclaration", NodeRule({
+			{"modifiers", "modifiers"},
+			{nullopt, TokenRule("keywordOperator")},
+			{"operator", "operator", true},
+			{"body", "operatorBody", true}
+		})},
+		{"operatorPrecendence", NodeRule({
+			{nullopt, TokenRule("identifier", "precedence")},
+			{nullopt, TokenRule("operator.*", ":")},
+			{"value", "integerLiteral"}
+		})},
 		{"operatorStatements", SequenceRule {
-			.rule = "entry",  // TODO: Special entries
+			.rule = VariantRule({
+				"operatorAssociativity",
+				"operatorPrecendence",
+			}),
 			.ascender = TokenRule("braceOpen"),
 			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
@@ -725,7 +782,9 @@ namespace Grammar {
 				{"operator", "postfixOperator"}
 			})
 		})},
-		{"postfixOperator", TokenRule("operatorPostfix", "[^,:]*")},  // Enclosing nodes can use trailing operators from the exceptions list
+		{"postfixOperator", NodeRule({
+			{"value", TokenRule("operatorPostfix", "[^,:]*")}  // Enclosing nodes can use trailing operators from the exceptions list
+		})},
 		{"postfixType", VariantRule({
 			"defaultType",
 			"nillableType",
@@ -758,7 +817,9 @@ namespace Grammar {
 			{"operator", "prefixOperator", true},
 			{"value", "postfixExpression"},
 		}, 2)},
-		{"prefixOperator", TokenRule("operatorPrefix", "[^&.]*")},  // primaryExpressions can start with operators from the exceptions list
+		{"prefixOperator", NodeRule({
+			{"value", TokenRule("operatorPrefix", "[^&.]*")}  // primaryExpressions can start with operators from the exceptions list
+		})},
 		{"primaryExpression", VariantRule({
 			"classExpression",
 			"closureExpression",
@@ -853,7 +914,9 @@ namespace Grammar {
 			}},
 			{nullopt, TokenRule("stringClosed|endOfFile")}
 		})},
-		{"stringSegment", TokenRule("stringSegment")},
+		{"stringSegment", NodeRule({
+			{"value", TokenRule("stringSegment")}
+		})},
 		{"structureBody", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"statements", "structureStatements"},
@@ -903,9 +966,9 @@ namespace Grammar {
 			{nullopt, TokenRule("bracketClosed|endOfFile")}
 		}, 2)},
 		{"subscriptDeclaration", NodeRule({
-			{"modifiers", "modifiers"},  // TODO: Warning: Wrong modifier(s).
+			{"modifiers", "modifiers"},
 			{nullopt, TokenRule("identifier", "subscript")},
-			{"signature", "functionSignature", true},  // TODO: Error: No signature.
+			{"signature", "functionSignature", true},
 			{"body", VariantRule({
 				"observersBody",
 				"functionBody"
@@ -923,7 +986,9 @@ namespace Grammar {
 		})},
 		{"tryExpression", NodeRule({
 			{nullopt, TokenRule("keywordTry")},
-			{"nillable", TokenRule("operatorPostfix", "\\?"), true},
+			{"nillable", LogicRule {
+				.rule = TokenRule("operatorPostfix", "\\?")
+			}, true},
 			{"value", "expression"},
 		})},
 		{"type", VariantRule({
@@ -962,7 +1027,11 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordVar")},
 			{"declarators", SequenceRule {
 				.rule = "declarator",
-				.delimiter = TokenRule("operator.*", ","),
+				.delimiter = NodeRule({
+					{nullopt, TokenRule("delimiterImplicit"), true},
+					{nullopt, TokenRule("operator.*", ",")},
+					{nullopt, TokenRule("delimiterImplicit"), true}
+				}),
 				.innerDelimitRange = {1, usize(-1)}
 			}}
 		})},

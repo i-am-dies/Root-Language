@@ -1,3 +1,8 @@
+infix operator + {
+	associativity: left
+	precedence: 1
+}
+
 if a in b in c in d { e }
 
 if key in self + 1 {

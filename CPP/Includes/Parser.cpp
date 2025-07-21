@@ -9,6 +9,7 @@ struct Parser {
 
 	using NodeRule = Grammar::NodeRule;
 	using TokenRule = Grammar::TokenRule;
+	using LogicRule = Grammar::LogicRule;
 	using VariantRule = Grammar::VariantRule;
 	using SequenceRule = Grammar::SequenceRule;
 	using RuleRef = Grammar::RuleRef;
@@ -218,13 +219,7 @@ struct Parser {
 			}
 		}
 
-		tokenFrame.value = Node {
-			{"type", "token"},
-			{"range", {
-				{"start", (int)position},
-				{"end", (int)position}
-			}}
-		};
+		tokenFrame.value = token.value;
 
 		if(clean) {
 			tokenFrame.cleanTokens++;
@@ -235,8 +230,31 @@ struct Parser {
 		return tokenFrame;
 	}
 
+	optional<Frame> parseLogic(Frame& logicFrame) {
+		LogicRule& logicRule = get<3>(logicFrame.key.rule);
+		Frame& ruleFrame = parse({logicRule.rule, logicFrame.end()});
+
+		if(ruleFrame.empty()) {
+			return nullopt;  // False
+		} else {
+			logicFrame.value = true;  // True
+			logicFrame.addSize(ruleFrame);
+
+			if(logicRule.optionalizer) {
+				Frame& optionalizerFrame = parse({*logicRule.optionalizer, logicFrame.end()});
+
+				if(!optionalizerFrame.empty()) {
+					logicFrame.value = false;  // Optional
+					logicFrame.addSize(optionalizerFrame);
+				}
+			}
+		}
+
+		return logicFrame;
+	}
+
 	optional<Frame> parseVariant(Frame& variantFrame) {
-		VariantRule& variantRule = get<3>(variantFrame.key.rule);
+		VariantRule& variantRule = get<4>(variantFrame.key.rule);
 		usize position = variantFrame.start();
 		optional<Frame> greatestFrame;
 
@@ -252,7 +270,7 @@ struct Parser {
 	}
 
 	bool parseDelimitSubsequence(Frame& sequenceFrame, vector<Frame>& frames, usize range[2]) {
-		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
+		SequenceRule& sequenceRule = get<5>(sequenceFrame.key.rule);
 
 		if(!sequenceRule.delimiter) {
 			return true;
@@ -282,7 +300,7 @@ struct Parser {
 	}
 
 	bool parseSubsequence(Frame& sequenceFrame, vector<Frame>& frames, usize range[2]) {
-		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
+		SequenceRule& sequenceRule = get<5>(sequenceFrame.key.rule);
 
 		if(!parseDelimitSubsequence(sequenceFrame, frames, sequenceRule.outerDelimitRange)) {
 			return false;
@@ -365,7 +383,8 @@ struct Parser {
 					{"type", "dirt"},
 					{"range", {
 						{"start", position}
-					}}
+					}},
+					{"tokens", NodeArray {}}
 				};
 				rollbackIndex++;
 			}
@@ -375,6 +394,7 @@ struct Parser {
 
 			sequenceFrame.dirtyTokens += dirtyFrame.size();
 			dirtFrame.dirtyTokens += dirtyFrame.size();  // Rollback support
+			dirtNode.get<NodeArray&>("tokens").push_back(dirtyFrame.value);
 			dirtNode.get<Node&>("range")["end"] = position;
 		}
 
@@ -383,7 +403,7 @@ struct Parser {
 	}
 
 	optional<Frame> parseSequence(Frame& sequenceFrame) {
-		SequenceRule& sequenceRule = get<4>(sequenceFrame.key.rule);
+		SequenceRule& sequenceRule = get<5>(sequenceFrame.key.rule);
 		vector<Frame> frames;
 
 		sequenceFrame.permitsDirt = sequenceRule.descender.has_value();
@@ -418,8 +438,9 @@ struct Parser {
 			case 0:  return parseReference(frame);
 			case 1:  return parseNode(frame);
 			case 2:  return parseToken(frame);
-			case 3:  return parseVariant(frame);
-			case 4:  return parseSequence(frame);
+			case 3:  return parseLogic(frame);
+			case 4:  return parseVariant(frame);
+			case 5:  return parseSequence(frame);
 			default: return nullopt;
 		}
 	}

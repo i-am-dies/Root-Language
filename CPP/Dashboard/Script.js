@@ -252,7 +252,7 @@ function handleMessage(message) {
 
 			let next,
 				nodes = [...consoleOutput.children].reverse(),
-				sources = ['lexer', 'parser', 'interpreter']
+				sources = ['lexer', 'parser', 'linter', 'interpreter']
 
 			for(let node of nodes) {
 				let nextPosition = node.dataset.position*1,
@@ -280,9 +280,8 @@ function handleMessage(message) {
 			let view = document.getElementById('client-'+report.senderFD);
 			if (!view) return;
 
-			let consoleOutput = view.querySelector('.consoleOutput');
-
-			let nodes = [...consoleOutput.children]
+			let consoleOutput = view.querySelector('.consoleOutput'),
+				nodes = [...consoleOutput.children]
 
 			for(let node of nodes) {
 				if(node.dataset.source === report.source && node.dataset.position*1 > report.position)  {
@@ -296,7 +295,7 @@ function handleMessage(message) {
 
 			let consoleOutput = view.querySelector('.consoleOutput');
 
-			let sources = ['lexer', 'parser', 'interpreter'],
+			let sources = ['lexer', 'parser', 'linter', 'interpreter'],
 				source = sources.indexOf(report.source);
 
 			if(source === -1) {
