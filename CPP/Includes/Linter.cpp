@@ -10,4 +10,34 @@
 // Front-end should use it both in code input area to lint colors and in console area to warn users about errors.
 struct Linter {
     Linter(const Node& tree);
+
+    /*
+    for (const token of tokens) {
+        const candidates = findAllNodesCoveringToken(token, ast);
+        let bestNode = null;
+        let minLength = Infinity;
+        for (const node of candidates) {
+            const len = node.end - node.start;
+            if (len < minLength) {
+                minLength = len;
+                bestNode = node;
+            }
+        }
+        if (bestNode) {
+            const type = determineType(bestNode, token);
+            const messages = checkLintingRules(bestNode, token);
+            results.push({
+                position: token.index,
+                type,
+                messages
+            });
+        } else {
+            results.push({
+                position: token.index,
+                type: determineTypeFromToken(token),
+                messages: []
+            });
+        }
+    }
+    */
 };

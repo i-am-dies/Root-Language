@@ -1,3 +1,5 @@
+if someFunc(1) resolveAs: { 2 } orAs: { 3 } { 4 }
+
 infix operator + {
 	associativity: left
 	precedence: 1
@@ -28,10 +30,10 @@ class A {
 
 	/*
 	static var subscript = [
-		'get': func () {
+		'get': func {
 			return a+b
 		},
-		'set': func () {
+		'set': func {
 			print('SET 0: \(a) \(b) \(value)')
 		}
 	]
@@ -381,7 +383,7 @@ do {
 	print(error)
 
 	throw struct { init {} }()
-} catch {  // _?
+} catch _? {
 	print(error)
 }
 

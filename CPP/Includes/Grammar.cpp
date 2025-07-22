@@ -106,11 +106,17 @@ namespace Grammar {
 		})},
 		{"arrayLiteral", NodeRule({
 			{nullopt, TokenRule("bracketOpen")},
+			{nullopt, TokenRule("delimiterImplicit"), true},
 			{"values", SequenceRule {
 				.rule = "expressionsSequence",
-				.delimiter = TokenRule("operator.*", ","),
+				.delimiter = NodeRule({
+					{nullopt, TokenRule("delimiterImplicit"), true},
+					{nullopt, TokenRule("operator.*", ",")},
+					{nullopt, TokenRule("delimiterImplicit"), true}
+				}),
 				.innerDelimitRange = {1, usize(-1)}
 			}},
+			{nullopt, TokenRule("delimiterImplicit"), true},
 			{nullopt, TokenRule("bracketClosed|endOfFile")}
 		})},
 		{"arrayType", NodeRule({
@@ -154,12 +160,12 @@ namespace Grammar {
 				{"callee", "postfixExpression"},
 				{"genericArguments", "genericArgumentsClause", true},
 				{"arguments", "callArgumentsClause"},
-				{"closure", "closureExpression", true}
+				{"closures", "closuresClause", true}
 			}),
 			NodeRule({
 				{"callee", "postfixExpression"},
 				{"genericArguments", "genericArgumentsClause", true},
-				{"closure", "closureExpression"}
+				{"closures", "closuresClause"}
 			})
 		})},
 		{"caseDeclaration", NodeRule({
@@ -171,6 +177,7 @@ namespace Grammar {
 			}}
 		})},
 		{"catchClause", NodeRule({
+			{nullopt, TokenRule("keywordCatch")},
 			{"types", SequenceRule {
 				.rule = "type",
 				.delimiter = TokenRule("operator.*", ","),
@@ -237,6 +244,10 @@ namespace Grammar {
 			.delimiter = TokenRule("delimiter.*"),
 			.descender = TokenRule("braceClosed")
 		}},
+		{"closuresClause", SequenceRule({
+			.rule = "identifiedClosure",
+			.range = {1, usize(-1)}
+		})},
 		{"closureExpression", NodeRule({
 			{nullopt, TokenRule("braceOpen")},
 			{"signature", "closureSignature", true},
@@ -309,11 +320,17 @@ namespace Grammar {
 		{"dictionaryLiteral", VariantRule({
 			NodeRule({
 				{nullopt, TokenRule("bracketOpen")},
+				{nullopt, TokenRule("delimiterImplicit"), true},
 				{"entries", SequenceRule {
 					.rule = "entry",
-					.delimiter = TokenRule("operator.*", ","),
+					.delimiter = NodeRule({
+						{nullopt, TokenRule("delimiterImplicit"), true},
+						{nullopt, TokenRule("operator.*", ",")},
+						{nullopt, TokenRule("delimiterImplicit"), true}
+					}),
 					.innerDelimitRange = {1, usize(-1)}
 				}},
+				{nullopt, TokenRule("delimiterImplicit"), true},
 				{nullopt, TokenRule("bracketClosed|endOfFile")}
 			}),
 			NodeRule({
@@ -336,6 +353,7 @@ namespace Grammar {
 		})},
 		{"elseClause", NodeRule({
 			{nullopt, TokenRule("keywordElse")},
+			{nullopt, TokenRule("delimiterImplicit"), true},
 			{"then", VariantRule({
 				"functionBody",
 				"expressionsSequence",
@@ -402,7 +420,7 @@ namespace Grammar {
 		{"floatLiteral", NodeRule({
 			{"value", TokenRule("numberFloat")}
 		})},
-		{"forStatement", NodeRule({  // TODO: Closures...
+		{"forStatement", NodeRule({
 			{nullopt, TokenRule("keywordFor")},
 			{"identifier", "identifier", true},
 			{"in", "inClause", true},
@@ -501,10 +519,15 @@ namespace Grammar {
 				TokenRule("endOfFile")
 			})}
 		}, 2)},
+		{"identifiedClosure", NodeRule({
+			{"identifier", "identifier"},
+			{nullopt, TokenRule("operator.*", ":")},
+			{"closure", "closureExpression"}
+		})},
 		{"identifier", NodeRule({
 			{"value", TokenRule("identifier")}
 		})},
-		{"ifStatement", NodeRule({  // TODO: Closures...
+		{"ifStatement", NodeRule({
 			{nullopt, TokenRule("keywordIf")},
 			{"condition", "expressionsSequence", true},
 			{"then", VariantRule({
@@ -1050,7 +1073,7 @@ namespace Grammar {
 			{nullopt, TokenRule("keywordWhile")},
 			{"condition", "expressionsSequence", true}
 		}, 2)},
-		{"whileStatement", NodeRule({  // TODO: Closures...
+		{"whileStatement", NodeRule({
 			{nullopt, TokenRule("keywordWhile")},
 			{"condition", "expressionsSequence", true},
 			{"value", VariantRule({
