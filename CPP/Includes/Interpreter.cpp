@@ -11,29 +11,29 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	using Token = Lexer::Token;
 
 	InterpreterSP parent;
-	struct InheritedContext {  // 0 - no inheritance, 1 - inherit by copy, 2 inherit by reference
+	struct InheritedContext {  // 0 - No inheritance, 1 - Inherit by copy, 2 - Inherit by reference
 		u8 composites = 0,
 		   calls = 0,
 		   scopes = 0,
 		   controlTransfers = 0;
 	} inheritedContext;
-	string_view code;
+	string code;
 	deque<Token> tokens;
 	NodeSP tree;
 	int position = 0;
 
 	Interpreter() {}
 
-	Interpreter(string_view code,
-				deque<Token> tokens,
+	Interpreter(const string& code,
+				const deque<Token>& tokens,
 				NodeSP tree) : code(code),
 							   tokens(tokens),
 							   tree(tree) {}
 
 	Interpreter(InterpreterSP parent,
 				InheritedContext IC,
-				string_view code,
-				deque<Token> tokens,
+				const string& code,
+				const deque<Token>& tokens,
 				NodeSP tree) : inheritedContext(IC),
 							   parent(parent),
 							   code(code),
@@ -154,8 +154,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	// ----------------------------------------------------------------
 
-	deque<CompositeTypeSP> _composites;
-	deque<CompositeTypeSP> _scopes;
+	deque<CompositeTypeSP> _composites,
+						   _scopes;
 
 	deque<CompositeTypeSP>& composites() {
 		return inheritedContext.composites == 2 && parent
@@ -224,10 +224,19 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	// ----------------------------------------------------------------
 
-	struct AccessPath {
-		variant<string, vector<TypeSP>> key;
-		bool internal = false;
+	/**
+	 * 0 - An identifier string for the member access.
+	 * 1 - A value array for the subscript access.
+	 * 2 - A value as the access base.
+	 */
+	using AccessComponent = variant<string, vector<TypeSP>, TypeSP>;
+
+	struct AccessSegment {
+		AccessComponent component;
+		bool internal = true;
 	};
+
+	using AccessPath = vector<AccessSegment>;
 
 	enum class AccessMode : u8 {
 		Get,
@@ -268,8 +277,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		const TypeID ID;
 		const bool concrete;
 
-		Type(TypeID ID = TypeID::Undefined, bool concrete = false) : ID(ID), concrete(concrete) { /*cout << "Type created\n";*/ }
-		virtual ~Type() { /*cout << "Type destroyed\n";*/ }
+		Type(TypeID ID = TypeID::Undefined, bool concrete = false) : ID(ID), concrete(concrete) { /*println("Type created");*/ }
+		virtual ~Type() { /*println("Type destroyed");*/ }
 
 		virtual bool acceptsA(const TypeSP& type) { return false; }
 		virtual bool conformsTo(const TypeSP& type) { return type->acceptsA(shared_from_this()); }
@@ -301,15 +310,15 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			// var a: getType = self.key(...arguments)
 			// var a: getType = self[...key]
 			// var a: getType = self[...key](...arguments)
-			virtual TypeSP access(AccessPath AP, GetRequest GR) { return nullptr; }
+			virtual TypeSP access(AccessSegment AS, GetRequest GR) { return nullptr; }
 
 			// self.key = setValue
 			// self[...key] = setValue
-			virtual void access(AccessPath AP, SetRequest SR) {}
+			virtual void access(AccessSegment AS, SetRequest SR) {}
 
 			// delete self.key
 			// delete self[...key]
-			virtual void access(AccessPath AP, DeleteRequest DR) {}
+			virtual void access(AccessSegment AS, DeleteRequest DR) {}
 
 		// Operators
 
@@ -347,8 +356,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	struct ParenthesizedType : Type {
 		TypeSP innerType;
 
-		ParenthesizedType(TypeSP type) : Type(TypeID::Parenthesized), innerType(move(type)) { cout << "(" << innerType->toString() << ") type created\n"; }
-		~ParenthesizedType() { cout << "(" << innerType->toString() << ") type destroyed\n"; }
+		ParenthesizedType(TypeSP type) : Type(TypeID::Parenthesized), innerType(move(type)) { println("(", innerType->toString(), ") type created"); }
+		~ParenthesizedType() { println("(", innerType->toString(), ") type destroyed"); }
 
 		bool acceptsA(const TypeSP& type) override {
 			return innerType->acceptsA(type);
@@ -366,8 +375,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	struct NillableType : Type {
 		TypeSP innerType;
 
-		NillableType(TypeSP type) : Type(TypeID::Nillable), innerType(move(type)) { cout << innerType->toString() << "? type created\n"; }
-		~NillableType() { cout << innerType->toString() << "? type destroyed\n"; }
+		NillableType(TypeSP type) : Type(TypeID::Nillable), innerType(move(type)) { println(innerType->toString(), "? type created"); }
+		~NillableType() { println(innerType->toString(), "? type destroyed"); }
 
 		bool acceptsA(const TypeSP& type) override {
 			return PredefinedEVoidTypeSP->acceptsA(type) ||
@@ -393,8 +402,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	struct DefaultType : Type {
 		TypeSP innerType;
 
-		DefaultType(TypeSP type) : Type(TypeID::Default), innerType(move(type)) { cout << innerType->toString() << "? type created\n"; }
-		~DefaultType() { cout << innerType->toString() << "! type destroyed\n"; }
+		DefaultType(TypeSP type) : Type(TypeID::Default), innerType(move(type)) { println(innerType->toString(), "? type created"); }
+		~DefaultType() { println(innerType->toString(), "! type destroyed"); }
 
 		bool acceptsA(const TypeSP& type) override {
 			return PredefinedEVoidTypeSP->acceptsA(type) ||
@@ -564,16 +573,16 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		const PrimitiveTypeID subID;
 		mutable any value;
 
-		PrimitiveType(const bool& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::Boolean), value(v) { cout << toString() << " type created\n"; }
+		PrimitiveType(const bool& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::Boolean), value(v) { println(toString(), " type created"); }
 		PrimitiveType(const double& v) : Type(TypeID::Primitive, true), subID(v != static_cast<int>(v) ? PrimitiveTypeID::Float : PrimitiveTypeID::Integer),
-																		value(v != static_cast<int>(v) ? any(v) : any(static_cast<int>(v))) { cout << toString() << " type created\n"; }
-		PrimitiveType(const int& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::Integer), value(v) { cout << toString() << " type created\n"; }
-		PrimitiveType(const char* v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::String), value(string(v)) { cout << toString() << " type created\n"; }
-		PrimitiveType(const string& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::String), value(v) { cout << toString() << " type created\n"; }
+																		value(v != static_cast<int>(v) ? any(v) : any(static_cast<int>(v))) { println(toString(), " type created"); }
+		PrimitiveType(const int& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::Integer), value(v) { println(toString(), " type created"); }
+		PrimitiveType(const char* v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::String), value(string(v)) { println(toString(), " type created"); }
+		PrimitiveType(const string& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::String), value(v) { println(toString(), " type created"); }
 		PrimitiveType(const TypeSP& v) : Type(TypeID::Primitive, true), subID(PrimitiveTypeID::Type), value(v ?
 																										   (!v->concrete ? v : throw invalid_argument("Primitive type isn't mean to store concrete types")) :
-																															   throw invalid_argument("Primitive type cannot be represented by nil")) { cout << toString() << " type created\n"; }
-		~PrimitiveType() { cout << toString() << " type destroyed\n"; }
+																															   throw invalid_argument("Primitive type cannot be represented by nil")) { println(toString(), " type created"); }
+		~PrimitiveType() { println(toString(), " type destroyed"); }
 
 		bool acceptsA(const TypeSP& type) override {
 			if(type->ID == TypeID::Primitive) {
@@ -664,28 +673,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			return SP<PrimitiveType>(operator double()-primType->operator double());
 		}
-
-		// TODO:
-		// Examine the idea of concrete types access through members (as a kind of proxy).
-		// In theory, this will make whole observing mechanism straight-forward:
-		// - Members can track if contained value is changed and call observers when needed.
-		// - Also they can track if value's type is changed and give an error if doesn't conform to accepting type.
-		// Calling concrete type operators may be somewhat transparent, where using "outer" operator will internally recall "inner" and observe for any changes simultaneously.
-		// Direct calls are also possible in case of literals mutation, but should be prohibited when accessing members.
-		// Although (!) this still does not provide solution for automatic member notification about composites deinitialization.
-		// Now, deinitializing composite must look up for each member (or another type of retaining declaration) of each retainer to set them nil and notify (or remove completely).
-		//
-		// Somewhere in between there is idea of direct value access with every concrete type storing references to all its definitions (containing members).
-		// It sounds more promising in regards to backward control, e.g. deinitializing composite can directly nillify members and call their observers without iterating each member of each retainer.
-		// Although (!) it may be too memory-consuming without real excuse, as this is the only case.
-		//
-		// And to contrast that two, there is idea where no special mechanism exist. This is no go, as changes can't be observed at all.
-		//
-		// UPDATE:
-		// Pre/Post and many others operators probably should not be accessed directly as now there is Inout type present.
-		// In theory, Inout will make it possible to "observe" member changes automatically.
-		// In reality, it should call target's accessors which will do all the work.
-		// For example: a++ decomposes to something like scope()->access(AccessPath("a"), SetRequest(scope()->access(AccessPath("a"), GetRequest())->plus(SP<PrimitiveType>(1))))
 
 		TypeSP multiply(TypeSP type) const override {
 			if(type->ID != TypeID::Primitive) {
@@ -790,7 +777,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return result;
 		}
 
-		// var a: getType = this
+		// var a: getType = self
 		virtual TypeSP access(GetRequest GR) override {
 			if(GR.arguments) {
 				throw invalid_argument("Can't call a dictionary");
@@ -801,44 +788,44 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return shared_from_this();
 		}
 
-		// this[arguments[0]] = setValue
+		// self[arguments[0]] = setValue
 		virtual void access(SetRequest SR) override {
 			throw invalid_argument("Can't set a dictionary");
 		}
 
-		// delete this[arguments[0]]
+		// delete self[arguments[0]]
 		virtual void access(DeleteRequest DR) override {
 			throw invalid_argument("Can't delete a dictionary");
 		}
 
-		// var a: getType = this[key[0]]
-		// var a: getType = this[key[0]](...arguments)
-		virtual TypeSP access(AccessPath AP, GetRequest GR) override {
-			if(AP.key.index() != 1 || std::get<1>(AP.key).size() != 1) {
+		// var a: getType = self[key[0]]
+		// var a: getType = self[key[0]](...arguments)
+		virtual TypeSP access(AccessSegment AS, GetRequest GR) override {
+			if(AS.component.index() != 1 || std::get<1>(AS.component).size() != 1) {
 				throw invalid_argument("Only single-argument subscripted get is allowed for a dictionary");
 			}
 
-		//	cout << "getting: " << std::get<1>(AP.key).at(0) << endl;
+		//	println("getting: ", std::get<1>(AS.key).at(0));
 
-			return get(std::get<1>(AP.key).at(0));
+			return get(std::get<1>(AS.component).at(0));
 		}
 
-		// this[key[0]] = setValue
-		virtual void access(AccessPath AP, SetRequest SR) override {
-			if(AP.key.index() != 1 || std::get<1>(AP.key).size() != 1) {
+		// self[key[0]] = setValue
+		virtual void access(AccessSegment AS, SetRequest SR) override {
+			if(AS.component.index() != 1 || std::get<1>(AS.component).size() != 1) {
 				throw invalid_argument("Only single-argument subscripted set is allowed for a dictionary");
 			}
 
-			emplace(std::get<1>(AP.key).at(0), SR.setValue);
+			emplace(std::get<1>(AS.component).at(0), SR.setValue);
 		}
 
-		// delete this[key[0]]
-		virtual void access(AccessPath AP, DeleteRequest DR) override {
-			if(AP.key.index() != 1 || std::get<1>(AP.key).size() != 1) {
+		// delete self[key[0]]
+		virtual void access(AccessSegment AS, DeleteRequest DR) override {
+			if(AS.component.index() != 1 || std::get<1>(AS.component).size() != 1) {
 				throw invalid_argument("Only single-argument subscripted delete is allowed for a dictionary");
 			}
 
-			removeLast(std::get<1>(AP.key).at(0));
+			removeLast(std::get<1>(AS.component).at(0));
 		}
 
 		bool equalsTo(const TypeSP& type) override {
@@ -1002,7 +989,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		const CompositeTypeID subID;
 		string title;
 		const int ownID = interpreter->composites().size();  // Assume that we won't have ID collisions (any composite must be pushed into global array after creation)
-		unordered_map<string_view, CompositeTypeSP> hierarchy = {
+		unordered_map<string, CompositeTypeSP> hierarchy = {
 			// Defaults are needed to distinguish between "not set" and "intentionally unset" states
 			{"super", nullptr},
 			{"Super", nullptr},
@@ -1014,18 +1001,18 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		};
 		unordered_map<int, Retention> retentions;  // Another ID : Retention
 		int life = 1;  // 0 - Creation (, Initialization?), 1 - Idle (, Deinitialization?), 2 - Destruction
-		std::set<TypeSP> inheritedTypes;  // May be composite (class, struct, protocol), reference to, or function
+		set<TypeSP> inheritedTypes;  // May be composite (class, struct, protocol), reference to, or function
 		vector<TypeSP> genericParametersTypes;
 		variant<function<TypeSP(vector<TypeSP>)>, NodeArraySP> statements;
-		unordered_map<string_view, CompositeTypeSP> imports;
-		unordered_map<string_view, Member> members;
+		unordered_map<string, CompositeTypeSP> imports;
+		unordered_map<string, Member> members;
 		Observers chainObservers;  // Internal access
 	//	unordered_map<FunctionTypeSP, Observers> subscriptObservers;  // External-internal access
 
 		CompositeType(InterpreterSP interpreter,
 					  CompositeTypeID subID,
 					  const string& title,
-					  const std::set<TypeSP>& inheritedTypes = {},
+					  const set<TypeSP>& inheritedTypes = {},
 					  const vector<TypeSP>& genericParametersTypes = {}) : Type(TypeID::Composite, true),
 					  													   interpreter(interpreter),
 																		   subID(subID),
@@ -1036,7 +1023,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			// TODO: Statically retain inherited and generic parameters composite types
 		}
 
-		std::set<TypeSP> getFullInheritanceChain() const {
+		set<TypeSP> getFullInheritanceChain() const {
 			auto chain = inheritedTypes;
 
 			for(const TypeSP& parentType : inheritedTypes) {
@@ -1050,7 +1037,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				}
 
 				if(compType) {
-					std::set<TypeSP> parentChain = compType->getFullInheritanceChain();
+					set<TypeSP> parentChain = compType->getFullInheritanceChain();
 
 					chain.insert(parentChain.begin(), parentChain.end());
 				}
@@ -1125,7 +1112,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			}
 
 			if(!inheritedTypes.empty()) {
-				std::set<TypeSP> chain = getFullInheritanceChain();
+				set<TypeSP> chain = getFullInheritanceChain();
 				bool first = true;
 
 				result += ": ";
@@ -1147,8 +1134,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return ownID;
 		}
 
-		// var a: getType = this
-		// var a: getType = this(...arguments)
+		// var a: getType = self
+		// var a: getType = self(...arguments)
 		virtual TypeSP access(GetRequest GR) {
 			if(!GR.arguments) {
 				return shared_from_this();
@@ -1157,7 +1144,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				throw invalid_argument("Composite is not callable");
 			}
 			if(subID != CompositeTypeID::Function) {
-				return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), InoutType::Path { shared_from_this(), "init" }, true)->access(GR);
+				return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(shared_from_this()), AccessSegment("init") })->access(GR);
 			}
 
 			// TODO: Function call logic
@@ -1173,22 +1160,53 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			throw invalid_argument("Can't delete a composite");
 		}
 
-		// var a: getType = this.key
-		// var a: getType = this.key(...arguments)
-		// var a: getType = this[...key]
-		// var a: getType = this[...key](...arguments)
-		virtual TypeSP access(AccessPath AP, GetRequest GR) override { return nullptr; }
+		// var a: getType = self.key
+		// var a: getType = self.key(...arguments)
+		// var a: getType = self[...key]
+		// var a: getType = self[...key](...arguments)
+		virtual TypeSP access(AccessSegment AS, GetRequest GR) override { return nullptr; }
 
-		// this.key = setValue
-		// this[...key] = setValue
-		virtual void access(AccessPath AP, SetRequest SR) override {}
+		// self.key = setValue
+		// self[...key] = setValue
+		virtual void access(AccessSegment AS, SetRequest SR) override {}
 
-		// delete this.key
-		// delete this[...key]
-		virtual void access(AccessPath AP, DeleteRequest DR) override {}
+		// delete self.key
+		// delete self[...key]
+		virtual void access(AccessSegment AS, DeleteRequest DR) override {}
+
+		TypeSP accessOverload(
+			AccessComponent key,
+			AccessMode mode,
+			bool internal = false,
+			optional<vector<TypeSP>> arguments = nullopt,
+			bool subscript = false,
+			TypeSP getType = nullptr,
+			TypeSP setValue = nullptr
+		) {
+			OverloadSearch search;
+
+			/*
+			findOverloads(key, search, "scope", mode, !arguments && !subscript, internal);
+
+			if(key.index() == 1) {
+				findSubscriptOverloads(search, mode);
+			}
+
+			optional<OverloadCandidate> candidate = matchOverload(search, mode, arguments, getType, setValue);
+
+			if(candidate) {
+				return applyOverloadAccess(candidate->overload->observers, candidate->overload, mode, arguments ? *arguments : vector<TypeSP>(), setValue);
+			} else
+			if(search.observers) {
+				return applyOverloadAccess(*search.observers, nullptr, mode, vector<TypeSP> { SP<PrimitiveType>(RHS) }, setValue);
+			}
+			*/
+
+			return nullptr;
+		}
 
 		void destroy() {
-			cout << "destroyComposite("+getTitle()+")" << endl;
+			println("destroyComposite("+getTitle()+")");
 			if(life == 2) {
 				return;
 			}
@@ -1236,7 +1254,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * Destroys contextually released composite.
 		 */
 		void destroyReleased() {
-			if(!retained()) {
+			if(!isRetained()) {
 				destroy();
 			}
 		}
@@ -1394,7 +1412,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * Composite is considered contextually retained if it is transitively retained by
 		 * the global namespace, a current scope composite or a current control trasfer value.
 		 */
-		bool retained() {
+		bool isRetained() {
 			CompositeTypeSP retainingComposite,
 							retainedComposite = static_pointer_cast<CompositeType>(shared_from_this());
 
@@ -1406,11 +1424,11 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return false;
 		}
 
-		CompositeTypeSP getHierarchy(const string_view& branch) {
+		CompositeTypeSP getHierarchy(const string& branch) {
 			return hierarchy.contains(branch) ? hierarchy[branch] : nullptr;
 		}
 
-		void setHierarchy(const string_view& key, CompositeTypeSP value) {
+		void setHierarchy(const string& key, CompositeTypeSP value) {
 			CompositeTypeSP OV = hierarchy[key],  // Old/new value
 							NV = hierarchy[key] = value;
 
@@ -1422,7 +1440,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			if(NV && (!self || NV->ownID != ownID)) {  // Chains should not be cyclic, empty values can't create cycles
 				auto composite = static_pointer_cast<CompositeType>(shared_from_this());
-				std::set<CompositeTypeSP> composites;
+				set<CompositeTypeSP> composites;
 
 				while(composite) {
 					if(!composites.insert(composite).second) {
@@ -1443,14 +1461,16 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			release(OV);
 		}
 
-		bool removeHierarchy(const string& key) {
-			if(auto keyNode = hierarchy.extract(key)) {
-				release(move(keyNode.mapped()));
+		template <typename... Keys>
+		void removeHierarchy(const string& firstKey, Keys&&... restKeys) {
+			auto removeKey = [&](const string& k) {
+				if(auto keyNode = hierarchy.extract(k)) {
+					release(move(keyNode.mapped()));
+				}
+			};
 
-				return true;
-			}
-
-			return false;
+			removeKey(firstKey);
+			(removeKey(forward<Keys>(restKeys)), ...);
 		}
 
 		bool hierarchyRetains(CompositeTypeSP retainedComposite) {
@@ -1535,12 +1555,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		}
 
 		void removeLevels() {
-			removeHierarchy("super");
-			removeHierarchy("Super");
-			removeHierarchy("self");
-			removeHierarchy("Self");
-			removeHierarchy("sub");
-			removeHierarchy("Sub");
+			removeHierarchy("super", "Super", "self", "Self", "sub", "Sub");
 		}
 
 		void setScope(CompositeTypeSP scopeComposite) {
@@ -1551,7 +1566,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return inheritedTypes.size() ? interpreter->getValueComposite(*inheritedTypes.begin()) : nullptr;
 		}
 
-		optional<reference_wrapper<Member>> getMember(const string_view& identifier) {
+		optional<reference_wrapper<Member>> getMember(const string& identifier) {
 			auto it = members.find(identifier);
 
 			if(it != members.end()) {
@@ -1561,11 +1576,11 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return nullopt;
 		}
 
-		Member& addMember(const string_view& identifier) {
+		Member& addMember(const string& identifier) {
 			return members[identifier];
 		}
 
-		void removeMember(const string_view& identifier) {
+		void removeMember(const string& identifier) {
 			if(auto memberNode = members.extract(identifier)) {
 				Member member = move(memberNode.mapped());
 
@@ -1768,11 +1783,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 *
 		 * The function automatically marks composites that have already been processed
 		 * and/or do not require further processing as specific branches.
-		 *
-		 * NOTE:
-		 * When accessing subscripts, we should collect all named overloads first without differentiating by their subscript support.
-		 * Checking for subscript support should be done at ranking stage, including additional "subscript" search for composites.
-		 * First overload candidates list should be transformed into another, containing only dictionaries and "subscript" overload candidates.
 		 */
 		void findOverloads(
 			const string& identifier,
@@ -1988,37 +1998,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			return value;
 		}
-
-		TypeSP accessOverload(
-			variant<string, vector<TypeSP>> key,
-			AccessMode mode,
-			bool internal = false,
-			optional<vector<TypeSP>> arguments = nullopt,
-			bool subscript = false,
-			TypeSP getType = nullptr,
-			TypeSP setValue = nullptr
-		) {
-			OverloadSearch search;
-
-			/*
-			findOverloads(key, search, "scope", mode, !arguments && !subscript, internal);
-
-			if(key.index() == 1) {
-				findSubscriptOverloads(search, mode);
-			}
-
-			optional<OverloadCandidate> candidate = matchOverload(search, mode, arguments, getType, setValue);
-
-			if(candidate) {
-				return applyOverloadAccess(candidate->overload->observers, candidate->overload, mode, arguments ? *arguments : vector<TypeSP>(), setValue);
-			} else
-			if(search.observers) {
-				return applyOverloadAccess(*search.observers, nullptr, mode, vector<TypeSP> { SP<PrimitiveType>(RHS) }, setValue);
-			}
-			*/
-
-			return nullptr;
-		}
 	};
 
 	struct ReferenceType : Type {
@@ -2219,23 +2198,18 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	};
 
 	struct InoutType : Type {
-		using Path = vector<variant<string, vector<TypeSP>, TypeSP>>;
-
 		bool implicit;
 		TypeSP innerType;
-		const Path path;
-		bool internal;
+		const AccessPath path;
 
 		InoutType(bool implicit,
 				  const TypeSP& innerType,
-				  const Path& path,
-				  bool internal) : Type(TypeID::Inout, !path.empty()),
-								   implicit(implicit),
-								   innerType(innerType),
-								   path(normalizedPath(path)),
-								   internal(internal) { cout << "inout type created\n"; }
+				  const AccessPath& path) : Type(TypeID::Inout, !path.empty()),
+											implicit(implicit),
+											innerType(innerType),
+											path(normalizedPath(path)) { println("inout type created"); }
 
-		~InoutType() { cout << "inout type destroyed\n"; }
+		~InoutType() { println("inout type destroyed"); }
 
 		bool acceptsA(const TypeSP& type) override {
 			return type->ID == TypeID::Inout && innerType->acceptsA(static_pointer_cast<InoutType>(type)->innerType);
@@ -2248,7 +2222,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				return normInner;
 			}
 
-			return SP<InoutType>(implicit, normInner, path, internal);
+			return SP<InoutType>(implicit, normInner, path);
 		}
 
 		string toString() const override {
@@ -2262,11 +2236,11 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		// var a: getType = path
 		// var a: getType = path(...arguments)
 		TypeSP access(GetRequest GR) override {
+			if(path.size() >  1; TypeSP target = evaluatedPath(AccessPath(path.begin(), path.end()-1))) {
+				return target->access(path.back(), GR);
+			} else
 			if(path.size() == 1; TypeSP target = evaluatedPath(path)) {
 				return target->access(GR);
-			} else
-			if(path.size() >  1; TypeSP target = evaluatedPath(Path(path.begin(), path.end()-1))) {
-				return target->access(AccessPath(pathPartToKey(path.back()), path.size() == 2 || true), GR);
 			}
 
 			return nullptr;
@@ -2274,21 +2248,21 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 		// path = setValue
 		void access(SetRequest SR) override {
+			if(path.size() >  1; TypeSP target = evaluatedPath(AccessPath(path.begin(), path.end()-1))) {
+				target->access(path.back(), SR);
+			} else
 			if(path.size() == 1; TypeSP target = evaluatedPath(path)) {
 				target->access(SR);
-			} else
-			if(path.size() >  1; TypeSP target = evaluatedPath(Path(path.begin(), path.end()-1))) {
-				target->access(AccessPath(pathPartToKey(path.back()), path.size() == 2 || true), SR);
 			}
 		}
 
 		// delete path
 		void access(DeleteRequest DR) override {
+			if(path.size() >  1; TypeSP target = evaluatedPath(AccessPath(path.begin(), path.end()-1))) {
+				target->access(path.back(), DR);
+			} else
 			if(path.size() == 1; TypeSP target = evaluatedPath(path)) {
 				target->access(DR);
-			} else
-			if(path.size() >  1; TypeSP target = evaluatedPath(Path(path.begin(), path.end()-1))) {
-				target->access(AccessPath(pathPartToKey(path.back()), path.size() == 2 || true), DR);
 			}
 		}
 
@@ -2296,9 +2270,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		// var a: getType = path.key(...arguments)
 		// var a: getType = path[...key]
 		// var a: getType = path[...key](...arguments)
-		TypeSP access(AccessPath AP, GetRequest GR) override {
+		TypeSP access(AccessSegment AS, GetRequest GR) override {
 			if(TypeSP target = evaluatedPath(path)) {
-				target->access(AccessPath(AP.key, true), GR);
+				return target->access(AS, GR);
 			}
 
 			return nullptr;
@@ -2306,19 +2280,30 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 		// path.key = setValue
 		// path[...key] = setValue
-		void access(AccessPath AP, SetRequest SR) override {
+		void access(AccessSegment AS, SetRequest SR) override {
 			if(TypeSP target = evaluatedPath(path)) {
-				target->access(AccessPath(AP.key, true), SR);
+				target->access(AS, SR);
 			}
 		}
 
 		// delete path.key
 		// delete path[...key]
-		void access(AccessPath AP, DeleteRequest DR) override {
+		void access(AccessSegment AS, DeleteRequest DR) override {
 			if(TypeSP target = evaluatedPath(path)) {
-				target->access(AccessPath(AP.key, true), DR);
+				target->access(AS, DR);
 			}
 		}
+
+		// NOTE:
+		// Pre/Post-in/de-crement and many others assigning operators should not be implemented directly at concrete types as the Inout type exists.
+		// Inout should not handle search ranking nor observers notification - this is an evaluated path type's access methods responsibility.
+		//
+		// There's still no solution for automatic member notification about composites deinitialization.
+		// Now, deinitializing composite must look up for each member (or another type of retaining declaration) of each retainer to set them nil and notify (or remove completely).
+		//
+		// If every concrete type would store references to all its definitions (containing members), it would pe possible for
+		// deinitializing composite to directly nillify members and call their observers without iterating each member of each retainer.
+		// Although it may be too memory-consuming without real excuse, as this is the only use case for such mechanism.
 
 		TypeSP preIncrement() override {
 			TypeSP oldValue = access(GetRequest()),
@@ -2362,58 +2347,48 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return oldValue;
 		}
 
-		variant<string, vector<TypeSP>> pathPartToKey(const variant<string, vector<TypeSP>, TypeSP>& part) const {
-			switch(part.index()) {
-				case 0:  return get<0>(part);
-				case 1:  return get<1>(part);
-				case 2:  return get<2>(part)->operator string();
-				default: return string();
-			}
-		}
+		AccessPath normalizedPath(const AccessPath& path) const {
+			AccessPath result;
 
-		Path normalizedPath(const Path& path) const {
-			auto result = Path();
+			for(const AccessSegment& segment : path) {
+				if(segment.component.index() == 2) {
+					TypeSP componentType = get<2>(segment.component);
 
-			for(auto& part : path) {
-				if(part.index() != 2) {
-					result.push_back(part);
-				} else
-				if(TypeSP typePart = get<2>(part)) {
-					if(typePart->ID != TypeID::Inout) {
-						result.push_back(part);
-					} else {
-						auto inoutType = static_pointer_cast<InoutType>(typePart);
+					if(componentType && componentType->ID == TypeID::Inout) {
+						auto inoutType = static_pointer_cast<InoutType>(componentType);
 
 						result.insert(result.end(), inoutType->path.begin(), inoutType->path.end());
+
+						continue;
 					}
-				} else {
-					throw invalid_argument("Inout path shouldn't contain nil-parts");
 				}
+
+				result.push_back(segment);
 			}
 
 			return result;
 		}
 
-		TypeSP evaluatedPath(const Path& path) const {
+		TypeSP evaluatedPath(const AccessPath& path) const {
 			if(path.empty()) {
 			//	throw invalid_argument("Can't evaluate empty inout path");  // TODO: Warning instead of error
 
 				return nullptr;
 			}
-			if(int index = path.at(0).index(); index != 2) {
+			if(int index = path.at(0).component.index(); index != 2) {
 				string kind = index == 0 ? "chain" : "subscript";
 
 				throw invalid_argument("Inout path expected to start with a value/type, but a key ("+kind+") was given");
 			}
 
-			TypeSP target = get<2>(path.at(0));
+			TypeSP target = get<2>(path.at(0).component);
 
 			for(int i = 1; i < path.size(); i++) {
 				if(!target) {
 					break;
 				}
 
-				target = target->access(AccessPath(pathPartToKey(path.at(i)), i != 1 || internal), GetRequest());
+				target = target->access(path.at(i), GetRequest());
 			}
 
 			return target;
@@ -2536,7 +2511,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	// ----------------------------------------------------------------
 
 	CompositeTypeSP createComposite(const string& title, CompositeTypeID type, CompositeTypeSP scope = nullptr) {
-		cout << "createComposite("+title+")" << endl;
+		println("createComposite("+title+")");
 		auto composite = SP<CompositeType>(shared_from_this(), type, title);
 
 		composites().push_back(composite);
@@ -2876,7 +2851,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				}
 			}
 
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), InoutType::Path { composite, identifier }, true);
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(composite), AccessSegment(identifier) });
 		} else
 		if(type == "continueStatement") {
 			TypeSP value;
@@ -2963,7 +2938,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return SP<FunctionType>(genericParametersTypes, parametersTypes, returnType, modifiers);
 		} else
 		if(type == "identifier") {
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), InoutType::Path { scope(), n->get<string>("value") }, false);
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(scope()), AccessSegment(n->get<string>("value"), false) });
 		} else
 		if(type == "ifStatement") {
 			if(n->empty("condition")) {
@@ -3018,7 +2993,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				return nullptr;
 			}
 
-			return SP<InoutType>(false, type, InoutType::Path {}, false);
+			return SP<InoutType>(false, type, AccessPath());
 		} else
 		if(type == "integerLiteral") {
 			return getValueWrapper(n->get<int>("value"), "Integer");
@@ -3219,7 +3194,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				args.push_back(argValue ? argValue->second : nullptr);
 			}
 
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), InoutType::Path { composite, args }, true);
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(composite), AccessSegment(args) });
 		} else
 		if(type == "throwStatement") {
 			auto value = executeNode(n->get("value"));
