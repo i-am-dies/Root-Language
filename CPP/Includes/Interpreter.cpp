@@ -224,25 +224,17 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	// ----------------------------------------------------------------
 
-	/**
-	 * 0 - An identifier string for the member access.
-	 * 1 - A value array for the subscript access.
-	 * 2 - A value as the access base.
-	 */
 	using AccessComponent = variant<string, vector<TypeSP>, TypeSP>;
 
 	struct AccessSegment {
-		AccessComponent component;
-		bool internal = true;
+		AccessComponent component;  // A string for the member access, a value array for the subscript access, or a value as the access root
+		bool isQualified = true;  // Is segment explicitly connected to a previous segment ("composite.member" instead of "member")
+		CompositeTypeSP accessor;  // What composite did request access to the segment
 	};
 
 	using AccessPath = vector<AccessSegment>;
 
-	enum class AccessMode : u8 {
-		Get,
-		Set,
-		Delete
-	};
+	enum class AccessMode : u8 { Get, Set, Delete };
 
 	struct AccessRequest {
 		const AccessMode mode;
@@ -940,8 +932,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	struct CompositeType : Type {
 		struct Retention {
-			bool retained;  // This retained by another
-			int retaining;  // Another retained by this
+			bool retained = false;  // This retained by another
+			int retaining = 0;      // Another retained by this
 		};
 
 		struct Observers {
@@ -963,19 +955,19 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 		struct Overload {
 			struct Modifiers {
-				bool infix,
-					 postfix,
-					 prefix,
+				bool isInfix = false,
+					 isPostfix = false,
+					 isPrefix = false,
 
-					 private_,
-					 protected_,
-					 public_,
+					 isPrivate = false,
+					 isProtected = false,
+					 isPublic = false,
 
-					 implicit,
-					 final,
-					 lazy,
-					 static_,
-					 virtual_;
+					 isImplicit = false,
+					 isFinal = false,
+					 isLazy = false,
+					 isStatic = false,
+					 isVirtual = false;
 			} modifiers;
 			TypeSP type,
 				   value;
@@ -1175,9 +1167,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		virtual void access(AccessSegment AS, DeleteRequest DR) override {}
 
 		TypeSP accessOverload(
-			AccessComponent key,
+			AccessSegment segment,
 			AccessMode mode,
-			bool internal = false,
 			optional<vector<TypeSP>> arguments = nullopt,
 			bool subscript = false,
 			TypeSP getType = nullptr,
@@ -1186,9 +1177,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			OverloadSearch search;
 
 			/*
-			findOverloads(key, search, "scope", mode, !arguments && !subscript, internal);
+			findOverloads(segment, search, "scope", mode, !arguments && !subscript);
 
-			if(key.index() == 1) {
+			if(segment.component.index() == 1) {
 				findSubscriptOverloads(search, mode);
 			}
 
@@ -1710,7 +1701,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			if(hierarchy.contains(identifier)) {
 				overloads.push_back(SP<Overload>(
-					Overload::Modifiers { .implicit = true, .final = true },
+					Overload::Modifiers { .isImplicit = true, .isFinal = true },
 					PredefinedCAnyTypeSP,
 					hierarchy[identifier]
 				));
@@ -1720,7 +1711,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			if(isNamespace() && imports.contains(identifier)) {
 				overloads.push_back(SP<Overload>(
-					Overload::Modifiers { .implicit = true, .final = true },
+					Overload::Modifiers { .isImplicit = true, .isFinal = true },
 					PredefinedCAnyTypeSP,
 					imports[identifier]
 				));
@@ -1753,7 +1744,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 						case TypeID::Composite:
 							auto compValue = static_pointer_cast<CompositeType>(value);
 
-							compValue->findOverloads("subscript", search_, "scope", mode, false, true);
+							compValue->findOverloads(AccessSegment("subscript", false), search_, "scope", mode, true);
 						break;
 					}
 				}
@@ -1770,7 +1761,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * Each "scope" is searched in the full order:
 		 * - Descent: sub, Sub – only when virtual overloads are present.
 		 * - Current – internally accompanies any other branch.
-		 * - Ascent: self, super, Self, Super, scope (only when search is not internal).
+		 * - Ascent: self, super, Self, Super, scope (only when a searched segment is not qualified).
 		 *
 		 * Branches are processed with the rules:
 		 * - The order is well-defined and preserved.
@@ -1785,12 +1776,11 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * and/or do not require further processing as specific branches.
 		 */
 		void findOverloads(
-			const string& identifier,
+			AccessSegment segment,
 			OverloadSearch& search,
 			const string& branch = "scope",
 			AccessMode mode = AccessMode::Get,
 			bool shadow = false,
-			bool internal = false,
 			sp<VisitedBranches> visited = SP<VisitedBranches>()
 		) {
 			auto composite = static_pointer_cast<CompositeType>(shared_from_this());
@@ -1802,8 +1792,16 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				return;
 			}
 
+			string identifier;
+
+			switch(segment.component.index()) {
+				case 0:  identifier = get<0>(segment.component); break;
+				case 1:  identifier = "subscript";               break;
+				default: throw invalid_argument("Only chain and subscript access is allowed for a composite");
+			}
+
 			Member overloads = findLocalOverloads(identifier);
-			bool hasVirtual = some(overloads, [](auto& v) { return v->modifiers.virtual_; });
+			bool hasVirtual = some(overloads, [](auto& v) { return v->modifiers.isVirtual; });
 			vector<string> branches = {""};
 
 			if(branch == "scope") {
@@ -1817,7 +1815,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				branches.push_back("Self");
 				branches.push_back("Super");
 
-				if(!internal) {
+				if(!segment.isQualified) {
 					branches.push_back("scope");
 				}
 			} else
@@ -1847,7 +1845,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 						continue;
 					}
 
-					chainedComposite->findOverloads(identifier, search, b, mode, shadow, internal, visited);
+					chainedComposite->findOverloads(segment, search, b, mode, shadow, visited);
 				} else {
 					continue;
 				}
@@ -1949,54 +1947,58 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 *		 didDelete(A, B)
 		 * }
 		 */
-		TypeSP applyOverloadAccess(const Observers& observers, OverloadSP overload, AccessMode mode, vector<TypeSP> arguments, TypeSP setValue = nullptr) {
+		TypeSP applyOverloadAccess(OverloadSP overload, GetRequest GR) {
+			Observers& observers = overload->observers;
+			vector<TypeSP> arguments;
 			TypeSP value;
 
-			switch(mode) {
-				case AccessMode::Get:
-					if(observers.willGet) {
-						observers.willGet->access(GetRequest(arguments));
-					}
-					if(observers.get) {
-						value = observers.get->access(GetRequest(arguments));
-					} else
-					if(overload) {
-						value = overload->value;
-					}
-					if(observers.didGet) {
-						observers.didGet->access(GetRequest(arguments));
-					}
-				break;
-				case AccessMode::Set:
-					arguments.push_back(setValue);
-
-					if(observers.willSet) {
-						observers.willSet->access(GetRequest(arguments));
-					}
-					if(observers.set) {
-						observers.set->access(GetRequest(arguments));
-					} else
-					if(overload) {
-						overload->value = setValue;
-					}
-					if(observers.didSet) {
-						observers.didSet->access(GetRequest(arguments));
-					}
-				break;
-				case AccessMode::Delete:
-					if(observers.willDelete) {
-						observers.willDelete->access(GetRequest(arguments));
-					}
-					if(observers.delete_) {
-						observers.delete_->access(GetRequest(arguments));
-					}
-					if(observers.didDelete) {
-						observers.didDelete->access(GetRequest(arguments));
-					}
-				break;
+			if(observers.willGet) {
+				observers.willGet->access(GetRequest(arguments));
+			}
+			if(observers.get) {
+				value = observers.get->access(GetRequest(arguments));
+			} else
+			if(overload) {
+				value = overload->value;
+			}
+			if(observers.didGet) {
+				observers.didGet->access(GetRequest(arguments));
 			}
 
 			return value;
+		}
+
+		void applyOverloadAccess(OverloadSP overload, SetRequest SR) {
+			Observers& observers = overload->observers;
+			vector<TypeSP> arguments = { SR.setValue };
+
+			if(observers.willSet) {
+				observers.willSet->access(GetRequest(arguments));
+			}
+			if(observers.set) {
+				observers.set->access(GetRequest(arguments));
+			} else
+			if(overload) {
+				overload->value = SR.setValue;
+			}
+			if(observers.didSet) {
+				observers.didSet->access(GetRequest(arguments));
+			}
+		}
+
+		void applyOverloadAccess(OverloadSP overload, DeleteRequest DR) {
+			Observers& observers = overload->observers;
+			vector<TypeSP> arguments;
+
+			if(observers.willDelete) {
+				observers.willDelete->access(GetRequest(arguments));
+			}
+			if(observers.delete_) {
+				observers.delete_->access(GetRequest(arguments));
+			}
+			if(observers.didDelete) {
+				observers.didDelete->access(GetRequest(arguments));
+			}
 		}
 	};
 
