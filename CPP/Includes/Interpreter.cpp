@@ -629,17 +629,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			}
 		}
 
-		// self = setValue
-		void access(SetRequest SR) override {
-			if(SR.setValue && SR.setValue->ID == TypeID::Primitive) {
-				auto primType = static_pointer_cast<PrimitiveType>(SR.setValue);
-
-				if(primType->subID == subID) {
-					value = primType->value;
-				}
-			}
-		}
-
 		TypeSP positive() const override {
 			return subID == PrimitiveTypeID::Type
 				 ? SP<PrimitiveType>(any_cast<TypeSP>(value))
@@ -697,30 +686,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		// In theory, Inout will make it possible to "observe" member changes automatically.
 		// In reality, it should call target's accessors which will do all the work.
 		// For example: a++ decomposes to something like scope()->access(AccessPath("a"), SetRequest(scope()->access(AccessPath("a"), GetRequest())->plus(SP<PrimitiveType>(1))))
-
-		TypeSP preIncrement() override {
-			access(SetRequest(positive()->plus(SP<PrimitiveType>(1))));
-
-			return shared_from_this();
-		}
-
-		TypeSP preDecrement() override {
-			access(SetRequest(positive()->minus(SP<PrimitiveType>(1))));
-
-			return shared_from_this();
-		}
-
-		TypeSP postIncrement() override {
-			access(SetRequest(positive()->plus(SP<PrimitiveType>(1))));
-
-			return minus(SP<PrimitiveType>(1));
-		}
-
-		TypeSP postDecrement() override {
-			access(SetRequest(positive()->minus(SP<PrimitiveType>(1))));
-
-			return plus(SP<PrimitiveType>(1));
-		}
 
 		TypeSP multiply(TypeSP type) const override {
 			if(type->ID != TypeID::Primitive) {
@@ -1570,16 +1535,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		}
 
 		void removeLevels() {
-			/*
-			for(auto it = hierarchy.cbegin(), next_it = it; it != hierarchy.cend(); it = next_it) {
-				++next_it;
-
-				if(removeHierarchy(it->first)) {
-					hierarchy.erase(it);
-				}
-			}
-			*/
-
 			removeHierarchy("super");
 			removeHierarchy("Super");
 			removeHierarchy("self");
@@ -2365,11 +2320,53 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			}
 		}
 
+		TypeSP preIncrement() override {
+			TypeSP oldValue = access(GetRequest()),
+				   newValue;
+
+			if(oldValue) {
+				access(SetRequest(newValue = oldValue->plus(SP<PrimitiveType>(1))));
+			}
+
+			return newValue;
+		}
+
+		TypeSP preDecrement() override {
+			TypeSP oldValue = access(GetRequest()),
+				   newValue;
+
+			if(oldValue) {
+				access(SetRequest(newValue = oldValue->minus(SP<PrimitiveType>(1))));
+			}
+
+			return newValue;
+		}
+
+		TypeSP postIncrement() override {
+			TypeSP oldValue = access(GetRequest());
+
+			if(oldValue) {
+				access(SetRequest(oldValue->plus(SP<PrimitiveType>(1))));
+			}
+
+			return oldValue;
+		}
+
+		TypeSP postDecrement() override {
+			TypeSP oldValue = access(GetRequest());
+
+			if(oldValue) {
+				access(SetRequest(oldValue->minus(SP<PrimitiveType>(1))));
+			}
+
+			return oldValue;
+		}
+
 		variant<string, vector<TypeSP>> pathPartToKey(const variant<string, vector<TypeSP>, TypeSP>& part) const {
 			switch(part.index()) {
-				case 0:  return std::get<0>(part);
-				case 1:  return std::get<1>(part);
-				case 2:  return std::get<2>(part)->operator string();
+				case 0:  return get<0>(part);
+				case 1:  return get<1>(part);
+				case 2:  return get<2>(part)->operator string();
 				default: return string();
 			}
 		}
@@ -2381,7 +2378,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				if(part.index() != 2) {
 					result.push_back(part);
 				} else
-				if(TypeSP typePart = std::get<2>(part)) {
+				if(TypeSP typePart = get<2>(part)) {
 					if(typePart->ID != TypeID::Inout) {
 						result.push_back(part);
 					} else {
@@ -2409,7 +2406,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				throw invalid_argument("Inout path expected to start with a value/type, but a key ("+kind+") was given");
 			}
 
-			TypeSP target = std::get<2>(path.at(0));
+			TypeSP target = get<2>(path.at(0));
 
 			for(int i = 1; i < path.size(); i++) {
 				if(!target) {
@@ -3100,7 +3097,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				return nullptr;
 			}
 
-			if(value->ID == TypeID::Primitive && !n->empty("operator")) {
+			if(!n->empty("operator")) {
 				if(n->get<Node&>("operator").get("value") == "++") {
 					return value->postIncrement();
 				}
@@ -3145,9 +3142,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				return nullptr;
 			}
 
-			if(value->ID == TypeID::Primitive && !n->empty("operator") ) {
-				if(n->get<Node&>("operator").get("value") == "!") {
-					return SP<PrimitiveType>(value->not_());
+			if(!n->empty("operator") ) {
+				if(n->get<Node&>("operator").get("value") == "+") {
+					return value->positive();
 				}
 				if(n->get<Node&>("operator").get("value") == "-") {
 					return value->negative();
@@ -3157,6 +3154,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				}
 				if(n->get<Node&>("operator").get("value") == "--") {
 					return value->preDecrement();
+				}
+				if(n->get<Node&>("operator").get("value") == "!") {
+					return SP<PrimitiveType>(value->not_());
 				}
 			}
 
