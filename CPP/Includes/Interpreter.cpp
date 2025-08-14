@@ -12,7 +12,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	InterpreterSP parent;
 	struct InheritedContext {  // 0 - No inheritance, 1 - Inherit by copy, 2 - Inherit by reference
-		u8 composites = 0,
+		u8 types = 0,
 		   calls = 0,
 		   scopes = 0,
 		   controlTransfers = 0;
@@ -40,7 +40,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 							   tokens(tokens),
 							   tree(tree)
 	{
-		if(inheritedContext.composites == 1)		_composites = parent->_composites;
+		if(inheritedContext.types == 1)				_types = parent->_types;
 	//	if(inheritedContext.calls == 1)				_calls = parent->_calls;
 		if(inheritedContext.scopes == 1)			_scopes = parent->_scopes;
 		if(inheritedContext.controlTransfers == 1)	_controlTransfers = parent->_controlTransfers;
@@ -154,17 +154,17 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	// ----------------------------------------------------------------
 
-	deque<CompositeTypeSP> _composites,
-						   _scopes;
+	deque<TypeSP> _types;  // TODO: Replace with a pointer to the global namespace. Types should be owned by the retention graph and not by the pool
+	deque<CompositeTypeSP> _scopes;
 
-	deque<CompositeTypeSP>& composites() {
-		return inheritedContext.composites == 2 && parent
-			 ? parent->composites()
-			 : _composites;
+	deque<TypeSP>& types() {
+		return inheritedContext.types == 2 && parent
+			 ? parent->types()
+			 : _types;
 	}
 
-	CompositeTypeSP getComposite(optional<int> ID) {
-		return ID && *ID < composites().size() ? composites().at(*ID) : nullptr;
+	TypeSP getType(optional<int> ID) {
+		return ID && *ID < types().size() ? types().at(*ID) : nullptr;
 	}
 
 	// ----------------------------------------------------------------
@@ -228,8 +228,8 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	struct AccessSegment {
 		AccessComponent component;  // A string for the member access, a value array for the subscript access, or a value as the access root
+		CompositeTypeSP accessor;  // What composite did request access to the segment (may be nil if isn't important)
 		bool isQualified = true;  // Is segment explicitly connected to a previous segment ("composite.member" instead of "member")
-		CompositeTypeSP accessor;  // What composite did request access to the segment
 	};
 
 	using AccessPath = vector<AccessSegment>;
@@ -266,8 +266,21 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	// ----------------------------------------------------------------
 
 	struct Type : enable_shared_from_this<Type> {
+		struct Retention {
+			bool retained = false;  // This retained by another
+			int retaining = 0;      // Another retained by this
+		};
+
+		const InterpreterSP interpreter;
+		const int ownID = interpreter->types().size();  // Assume that we won't have ID collisions (any type must be pushed into global array after creation)
 		const TypeID ID;
 		const bool concrete;
+		int life = 1;  // 0 - Creation (, Initialization?), 1 - Idle (, Deinitialization?), 2 - Destruction
+		unordered_map<int, Retention> retentions;  // Another ID : Retention
+
+	//	uintptr_t ownID() {
+	//		return reinterpret_cast<uintptr_t>(*shared_from_this());
+	//	}
 
 		Type(TypeID ID = TypeID::Undefined, bool concrete = false) : ID(ID), concrete(concrete) { /*println("Type created");*/ }
 		virtual ~Type() { /*println("Type destroyed");*/ }
@@ -276,6 +289,16 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		virtual bool conformsTo(const TypeSP& type) { return type->acceptsA(shared_from_this()); }
 		virtual TypeSP normalized() { return shared_from_this(); }
 		virtual string toString() const { return string(); }  // User-friendly representation
+
+		// Now we are planning to normalize all types for one single time before subsequent comparisons, or using this/similar to this function at worst case, as this is performant-costly operation in C++
+		// One thing that also should be mentioned here is that types can't be normalized without losing their initial string representation at the moment
+		static bool acceptsANormalized(const TypeSP& left, const TypeSP& right) {
+			return left && left->acceptsA(right ? right->normalized() : PredefinedEVoidTypeSP);
+		}
+
+		static bool acceptsAConcrete(const TypeSP& left, const TypeSP& right) {
+			return left && right && right->concrete && left->acceptsA(right);
+		}
 
 		// Cast
 
@@ -314,29 +337,226 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 		// Operators
 
-			virtual TypeSP positive() const { return SP<Type>(); }
-			virtual TypeSP negative() const { return SP<Type>(); }
-			virtual TypeSP plus(TypeSP type) const { return SP<Type>(); }
-			virtual TypeSP minus(TypeSP type) const { return plus(static_pointer_cast<Type>(type)->negative()); }
-			virtual TypeSP preIncrement() { return shared_from_this(); }
-			virtual TypeSP preDecrement() { return shared_from_this(); }
-			virtual TypeSP postIncrement() { return SP<Type>(); }
-			virtual TypeSP postDecrement() { return SP<Type>(); }
-			virtual TypeSP multiply(TypeSP type) const { return SP<Type>(); }
-			virtual TypeSP divide(TypeSP type) const { return SP<Type>(); }
+			virtual TypeSP positive() const { throw logic_error("Unary plus operator isn't implemented for this type"); }
+			virtual TypeSP negative() const { throw logic_error("Unary minus operator isn't implemented for this type"); }
+			virtual TypeSP plus(TypeSP type) const { throw logic_error("Addition operator isn't implemented for this type"); }
+			virtual TypeSP minus(TypeSP type) const { return plus(type->negative()); }
+			virtual TypeSP preIncrement() { throw logic_error("Pre-increment operator isn't implemented for this type"); }
+			virtual TypeSP preDecrement() { throw logic_error("Pre-decrement operator isn't implemented for this type"); }
+			virtual TypeSP postIncrement() { throw logic_error("Post-increment operator isn't implemented for this type"); }
+			virtual TypeSP postDecrement() { throw logic_error("Post-decrement operator isn't implemented for this type"); }
+			virtual TypeSP multiply(TypeSP type) const { throw logic_error("Multiplication operator isn't implemented for this type"); }
+			virtual TypeSP divide(TypeSP type) const { throw logic_error("Division operator isn't implemented for this type"); }
 			virtual bool not_() const { return !operator bool(); }
 			virtual bool equalsTo(const TypeSP& type) { return acceptsA(type) && conformsTo(type); }
-			virtual bool notEqualsTo(const TypeSP& type) { return !equalsTo(type); }
 
-		// Now we are planning to normalize all types for one single time before subsequent comparisons, or using this/similar to this function at worst case, as this is performant-costly operation in C++
-		// One thing that also should be mentioned here is that types can't be normalized without losing their initial string representation at the moment
-		static bool acceptsANormalized(const TypeSP& left, const TypeSP& right) {
-			return left && left->acceptsA(right ? right->normalized() : PredefinedEVoidTypeSP);
-		}
+		// Life management
 
-		static bool acceptsAConcrete(const TypeSP& left, const TypeSP& right) {
-			return left && right && right->concrete && left->acceptsA(right);
-		}
+			void destroy() {
+				println("destroy: ", toString());
+				if(life == 2) {
+					return;
+				}
+
+				life = 2;
+
+				unordered_set<int> retainedIDs = getRetainedIDs();
+
+				for(int retainedID : retainedIDs) {
+					if(TypeSP retainedType = interpreter->getType(retainedID)) {
+						release(retainedType);
+
+						if(interpreter->threw()) {
+							interpreter->report(2, nullptr, "Exception in deinitilizer...");
+
+						//	return;  Let the objects destroy no matter of errors
+						}
+					}
+				}
+
+				TypeSP self = shared_from_this();
+
+				interpreter->types()[ownID].reset();
+
+				unordered_set<int> retainersIDs = getRetainersIDs();
+				int aliveRetainers = 0;
+
+				for(int retainerID : retainersIDs) {
+					if(TypeSP retainingType = interpreter->getType(retainerID); retainingType->life < 2) {
+						aliveRetainers++;
+
+						// TODO: Notify retainers about destroy
+					}
+				}
+
+				if(aliveRetainers > 0) {
+					interpreter->report(1, nullptr, "Type "+toString()+" was destroyed with a non-empty["+std::to_string(aliveRetainers)+"] retainer list.");
+				}
+				if(self.use_count() > 1) {
+					interpreter->report(1, nullptr, "Type "+toString()+" was destroyed with a non-single["+std::to_string(self.use_count())+"] low-level reference count.");
+				}
+			}
+
+			/**
+			 * Destroys contextually released type.
+			 */
+			void destroyReleased() {
+				if(!isRetained()) {
+					destroy();
+				}
+			}
+
+			/**
+			 * Directly retains type.
+			 *
+			 * - Retaining type's retained list gets the retained type's retention counter increased.
+			 * - Retained type's retainers list gets the retaining type's retention state set to true.
+			 *
+			 * Each entry will be added if not exists.
+			 */
+			void retain(TypeSP retainedType) {
+				if(!retainedType || retainedType == shared_from_this()) {
+					return;
+				}
+
+				int retainingID = ownID,
+					retainedID = retainedType->ownID;
+				auto& retainingRetentions = retentions,
+					  retainedRetentions = retainedType->retentions;
+
+				retainingRetentions[retainedID].retaining++;
+				retainedRetentions[retainingID].retained = true;
+			}
+
+			/**
+			 * Directly releases type.
+			 *
+			 * - Retaining type's retained list gets the retained type's retention counter decreased.
+			 * - Directly released type's retainers list gets the retaining type's retention state set to false.
+			 *   Contextually released type will be destroyed.
+			 *   (release -> !retains -> destroyReleased -> !retained -> destroy)
+			 *
+			 * Each entry will be removed if redundant.
+			 */
+			void release(TypeSP retainedType) {
+				if(!retainedType || retainedType == shared_from_this()) {
+					return;
+				}
+
+				int retainingID = ownID,
+					retainedID = retainedType->ownID;
+				auto& retainingRetentions = retentions,
+					  retainedRetentions = retainedType->retentions;
+				auto retainingIt = retainingRetentions.find(retainedID),
+					 retainedIt = retainedRetentions.find(retainingID);
+
+				if(retainingIt != retainingRetentions.end() && retainingIt->second.retaining) {
+					retainingIt->second.retaining--;
+
+					if(!retainingIt->second.retained && !retainingIt->second.retaining) {
+						retainingRetentions.erase(retainingIt);
+					}
+				}
+				if(retainedIt != retainedRetentions.end() && !retains(retainedType)) {
+					retainedIt->second.retained = false;
+
+					if(!retainedIt->second.retaining) {
+						retainedRetentions.erase(retainedIt);
+					}
+
+					retainedType->destroyReleased();
+				}
+			}
+
+			/**
+			 * Returns a state of direct retention.
+			 *
+			 * Type A is considered directly retained if it presents in type B's retained IDs list.
+			 *
+			 * It is implementation dependent: retain and release functions must be utilized
+			 * in corresponding places for this to work. Example is the case when composite B
+			 * uses composite A in its hierarchy, types, imports, members or observers.
+			 */
+			bool retains(TypeSP retainedType) {
+				if(life == 2 || !retainedType) {
+					return false;
+				}
+
+				int retainedID = retainedType->ownID;
+
+				return retentions.count(retainedID) && retentions[retainedID].retaining;
+			}
+
+			/**
+			 * Returns a state of transitive retention.
+			 *
+			 * Type A is considered transitively retained by type B if they
+			 * are same type or if type B directly retains it (recursively).
+			 *
+			 * visitedIDs is used to exclude a retain cycles and redundant passes
+			 * from the lookup and is meant to be set internally only.
+			 */
+			bool retainsDistant(TypeSP retainedType, sp<unordered_set<int>> visitedIDs = SP<unordered_set<int>>()) {
+				if(life == 2 || !retainedType) {
+					return false;
+				}
+				if(retainedType == shared_from_this() || retains(retainedType)) {
+					return true;
+				}
+				for(int retainedID : getRetainedIDs()) {
+					if(!visitedIDs->contains(retainedID)) {
+						visitedIDs->insert(retainedID);
+
+						if(TypeSP retainingType = interpreter->getType(retainedID); retainingType->retainsDistant(retainedType, visitedIDs)) {
+							return true;
+						}
+					}
+				}
+
+				return false;
+			}
+
+			/**
+			 * Returns a state of contextual retention.
+			 *
+			 * Type is considered contextually retained if it has no owning interpreter instance or if it is
+			 * transitively retained by the global namespace, a current scope composite or a current control trasfer value.
+			 */
+			bool isRetained() {
+				if(!interpreter) {
+					return true;
+				}
+
+				TypeSP retainingType,
+					   retainedType = shared_from_this();
+
+				if(retainingType = interpreter->controlTransfer().value)	if(retainingType->retainsDistant(retainedType)) return true;
+				if(retainingType = interpreter->scope())					if(retainingType->retainsDistant(retainedType)) return true;
+			//	for(auto&& retainingType : interpreter->scopes())			if(retainingType->retainsDistant(retainedType)) return true;  // May be useful when "with" syntax construct will be added
+				if(retainingType = interpreter->getType(0))					if(retainingType->retainsDistant(retainedType)) return true;  // TODO: Check if this should be replaced with an own stack (each module have its Global) or ^^^ (scope stack), as I don't really know if current scope or current Global only will be sufficient for imports
+
+				return false;
+			}
+
+			unordered_set<int> getRetentionsIDs(bool direction) const {
+				unordered_set<int> result;
+
+				for(const auto& [key, value] : retentions) {
+					if(direction ? value.retaining : value.retained) {
+						result.insert(key);
+					}
+				}
+
+				return result;
+			}
+
+			unordered_set<int> getRetainersIDs() const {
+				return getRetentionsIDs(false);
+			}
+
+			unordered_set<int> getRetainedIDs() const {
+				return getRetentionsIDs(true);
+			}
 	};
 
 	static string to_string(const TypeSP& type, bool raw = false) {
@@ -931,56 +1151,32 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 	};
 
 	struct CompositeType : Type {
-		struct Retention {
-			bool retained = false;  // This retained by another
-			int retaining = 0;      // Another retained by this
-		};
-
 		struct Observers {
 			enum class Type {
 				Member,
 				Chain,
 				Subscript
 			} type;
-			CompositeTypeSP willGet,
-							get,
-							didGet,
-							willSet,
-							set,
-							didSet,
-							willDelete,
-							delete_,
-							didDelete;
+			CompositeTypeSP willGet, get, didGet,
+							willSet, set, didSet,
+							willDelete, delete_, didDelete;
 		};
 
 		struct Overload {
 			struct Modifiers {
-				bool isInfix = false,
-					 isPostfix = false,
-					 isPrefix = false,
-
-					 isPrivate = false,
-					 isProtected = false,
-					 isPublic = false,
-
-					 isImplicit = false,
-					 isFinal = false,
-					 isLazy = false,
-					 isStatic = false,
-					 isVirtual = false;
+				bool isInfix, isPostfix, isPrefix,
+					 isPrivate, isProtected, isPublic,
+					 isImplicit, isFinal, isLazy, isStatic, isVirtual;
 			} modifiers;
-			TypeSP type,
-				   value;
-			Observers observers; // External access
+			TypeSP type, value;
+			Observers observers;
 		};
 
 		using OverloadSP = sp<Overload>;
 		using Member = deque<OverloadSP>;
 
-		InterpreterSP interpreter;
 		const CompositeTypeID subID;
 		string title;
-		const int ownID = interpreter->composites().size();  // Assume that we won't have ID collisions (any composite must be pushed into global array after creation)
 		unordered_map<string, CompositeTypeSP> hierarchy = {
 			// Defaults are needed to distinguish between "not set" and "intentionally unset" states
 			{"super", nullptr},
@@ -991,15 +1187,12 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			{"Sub", nullptr},
 			{"scope", nullptr}
 		};
-		unordered_map<int, Retention> retentions;  // Another ID : Retention
-		int life = 1;  // 0 - Creation (, Initialization?), 1 - Idle (, Deinitialization?), 2 - Destruction
 		set<TypeSP> inheritedTypes;  // May be composite (class, struct, protocol), reference to, or function
 		vector<TypeSP> genericParametersTypes;
 		variant<function<TypeSP(vector<TypeSP>)>, NodeArraySP> statements;
 		unordered_map<string, CompositeTypeSP> imports;
 		unordered_map<string, Member> members;
-		Observers chainObservers;  // Internal access
-	//	unordered_map<FunctionTypeSP, Observers> subscriptObservers;  // External-internal access
+		Observers observers;
 
 		CompositeType(InterpreterSP interpreter,
 					  CompositeTypeID subID,
@@ -1136,7 +1329,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				throw invalid_argument("Composite is not callable");
 			}
 			if(subID != CompositeTypeID::Function) {
-				return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(shared_from_this()), AccessSegment("init") })->access(GR);
+				return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath {
+					AccessSegment(shared_from_this()),
+					AccessSegment("init", interpreter->scope())
+				})->access(GR);
 			}
 
 			// TODO: Function call logic
@@ -1156,264 +1352,213 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		// var a: getType = self.key(...arguments)
 		// var a: getType = self[...key]
 		// var a: getType = self[...key](...arguments)
-		virtual TypeSP access(AccessSegment AS, GetRequest GR) override { return nullptr; }
-
-		// self.key = setValue
-		// self[...key] = setValue
-		virtual void access(AccessSegment AS, SetRequest SR) override {}
-
-		// delete self.key
-		// delete self[...key]
-		virtual void access(AccessSegment AS, DeleteRequest DR) override {}
-
-		TypeSP accessOverload(
-			AccessSegment segment,
-			AccessMode mode,
-			optional<vector<TypeSP>> arguments = nullopt,
-			bool subscript = false,
-			TypeSP getType = nullptr,
-			TypeSP setValue = nullptr
-		) {
+		virtual TypeSP access(AccessSegment AS, GetRequest GR) override {
 			OverloadSearch search;
+			optional<OverloadCandidate> candidate;
+			string identifier;
+			bool subscript = false;
 
-			/*
-			findOverloads(segment, search, "scope", mode, !arguments && !subscript);
-
-			if(segment.component.index() == 1) {
-				findSubscriptOverloads(search, mode);
+			switch(AS.component.index()) {
+				case 0:
+					identifier = get<0>(AS.component);
+				break;
+				case 1:
+					identifier = "subscript";
+					subscript = true;
+				break;
+				default:
+					throw invalid_argument("Only chain and subscript access is allowed for a composite");
 			}
 
-			optional<OverloadCandidate> candidate = matchOverload(search, mode, arguments, getType, setValue);
+			findOverloads(identifier, search, "scope", GR.mode, AS.isQualified, !GR.arguments && !subscript);
+
+			if(!search.candidates.empty()) {
+				candidate = search.candidates[0];  // TODO: Ranking
+			}
 
 			if(candidate) {
-				return applyOverloadAccess(candidate->overload->observers, candidate->overload, mode, arguments ? *arguments : vector<TypeSP>(), setValue);
+				OverloadSP overload = candidate->overload;
+				TypeSP value = overload->value;
+				Observers& observers = overload->observers;
+				vector<TypeSP> arguments;
+
+				if(observers.willGet) {
+					observers.willGet->access(GetRequest(arguments));
+				}
+				if(observers.get) {
+					value = observers.get->access(GetRequest(arguments));
+				} else {
+					value = overload->value;
+				}
+				if(value && GR.arguments) {
+					value = value->access(GR);
+				}
+				if(observers.didGet) {
+					observers.didGet->access(GetRequest(arguments));
+				}
+
+				return value;
 			} else
 			if(search.observers) {
-				return applyOverloadAccess(*search.observers, nullptr, mode, vector<TypeSP> { SP<PrimitiveType>(RHS) }, setValue);
+				TypeSP value;
+				Observers& observers = *search.observers;
+				vector<TypeSP> arguments = { SP<PrimitiveType>(identifier) };
+
+				if(subscript) {}  // TODO: Pass subscript arguments as array
+
+				if(observers.willGet) {
+					observers.willGet->access(GetRequest(arguments));
+				}
+				if(observers.get) {
+					value = observers.get->access(GetRequest(arguments));
+				}
+				if(value && GR.arguments) {
+					value = value->access(GR);
+				}
+				if(observers.didGet) {
+					observers.didGet->access(GetRequest(arguments));
+				}
+
+				return value;
 			}
-			*/
 
 			return nullptr;
 		}
 
-		void destroy() {
-			println("destroyComposite("+getTitle()+")");
-			if(life == 2) {
-				return;
+		// self.key = setValue
+		// self[...key] = setValue
+		virtual void access(AccessSegment AS, SetRequest SR) override {
+			OverloadSearch search;
+			optional<OverloadCandidate> candidate;
+			string identifier;
+			bool subscript = false;
+
+			switch(AS.component.index()) {
+				case 0:
+					identifier = get<0>(AS.component);
+				break;
+				case 1:
+					identifier = "subscript";
+					subscript = true;
+				break;
+				default:
+					throw invalid_argument("Only chain and subscript access is allowed for a composite");
 			}
 
-			life = 2;
+			findOverloads(identifier, search, "scope", SR.mode, AS.isQualified, !subscript);
 
-			unordered_set<int> retainedIDs = getRetainedIDs();
+			if(!search.candidates.empty()) {
+				candidate = search.candidates[0];  // TODO: Ranking
+			}
 
-			for(int retainedID : retainedIDs) {
-				if(CompositeTypeSP retainedComposite = interpreter->getComposite(retainedID)) {
-					release(retainedComposite);
+			if(candidate) {
+				candidate->overload->value = SR.setValue;
+			} else
+			if(search.observers) {
+				Observers& observers = *search.observers;
+				vector<TypeSP> arguments = { SP<PrimitiveType>(identifier), SR.setValue };
 
-					/*  Let the objects destroy no matter of errors
-					if(threw()) {
-						return;
-					}
-					*/
+				if(observers.willSet) {
+					observers.willSet->access(GetRequest(arguments));
+				}
+				if(observers.set) {
+					observers.set->access(GetRequest(arguments));
+				}
+				if(observers.didSet) {
+					observers.didSet->access(GetRequest(arguments));
 				}
 			}
+		}
 
-			TypeSP self = shared_from_this();
+		// delete self.key
+		// delete self[...key]
+		virtual void access(AccessSegment AS, DeleteRequest DR) override {
+			OverloadSearch search;
+			optional<OverloadCandidate> candidate;
+			string identifier;
+			bool subscript = false;
 
-			interpreter->composites()[ownID].reset();
+			switch(AS.component.index()) {
+				case 0:
+					identifier = get<0>(AS.component);
+				break;
+				case 1:
+					identifier = "subscript";
+					subscript = true;
+				break;
+				default:
+					throw invalid_argument("Only chain and subscript access is allowed for a composite");
+			}
 
-			unordered_set<int> retainersIDs = getRetainersIDs();
-			int aliveRetainers = 0;
+			findOverloads(identifier, search, "scope", DR.mode, AS.isQualified, !subscript);
 
-			for(int retainerID : retainersIDs) {
-				if(CompositeTypeSP retainingComposite = interpreter->getComposite(retainerID); retainingComposite->life < 2) {
-					aliveRetainers++;
+			if(!search.candidates.empty()) {
+				candidate = search.candidates[0];  // TODO: Ranking
+			}
 
-					// TODO: Notify retainers about destroy
+			if(candidate) {
+				candidate->overload->value = nullptr;
+			//	candidate->composite->removeOverload(candidate->overload);
+			} else
+			if(search.observers) {
+				Observers& observers = *search.observers;
+				vector<TypeSP> arguments;
+
+				if(observers.willDelete) {
+					observers.willDelete->access(GetRequest(arguments));
+				}
+				if(observers.delete_) {
+					observers.delete_->access(GetRequest(arguments));
+				}
+				if(observers.didDelete) {
+					observers.didDelete->access(GetRequest(arguments));
 				}
 			}
-
-			if(aliveRetainers > 0) {
-				interpreter->report(1, nullptr, "Composite "+getTitle()+" was destroyed with a non-empty["+std::to_string(aliveRetainers)+"] retainer list.");
-			}
-			if(self.use_count() > 1) {
-				interpreter->report(1, nullptr, "Composite "+getTitle()+" was destroyed with a non-single["+std::to_string(self.use_count())+"] low-level reference count.");
-			}
 		}
 
 		/**
-		 * Destroys contextually released composite.
+		 * var a: A {
+		 *		willGet
+		 *			get -> A
+		 *		 didGet
+		 *
+		 *		willSet(A)
+		 *			set(A)
+		 *		 didSet(A)
+		 *
+		 *		willDelete
+		 *			delete
+		 *		 didDelete
+		 * }
+		 *
+		 * observers {
+		 *		willGet(string, type)
+		 *			get(string, type) -> _?
+		 *		 didGet(string, type)
+		 *
+		 *		willSet(string, type, _?)
+		 *			set(string, type, _?)
+		 *		 didSet(string, type, _?)
+		 *
+		 *		willDelete(string, type)
+		 *			delete(string, type)
+		 *		 didDelete(string, type)
+		 * }
+		 *
+		 * subscript(A, B) -> C {
+		 *		willGet(A, B)
+		 *			get(A, B) -> C
+		 *		 didGet(A, B)
+		 *
+		 *		willSet(A, B, C)
+		 *			set(A, B, C)
+		 *		 didSet(A, B, C)
+		 *
+		 *		willDelete(A, B)
+		 *			delete(A, B)
+		 *		 didDelete(A, B)
+		 * }
 		 */
-		void destroyReleased() {
-			if(!isRetained()) {
-				destroy();
-			}
-		}
-
-		/**
-		 * Directly retains composite.
-		 *
-		 * - Retaining composite's retained list gets the retained composite's retention counter increased.
-		 * - Retained composite's retainers list gets the retaining composite's retention state set to true.
-		 *
-		 * Each entry will be added if not exists.
-		 */
-		void retain(CompositeTypeSP retainedComposite) {
-			if(!retainedComposite || retainedComposite == shared_from_this()) {
-				return;
-			}
-
-			int retainingID = ownID,
-				retainedID = retainedComposite->ownID;
-			auto& retainingRetentions = retentions,
-				  retainedRetentions = retainedComposite->retentions;
-
-			retainingRetentions[retainedID].retaining++;
-			retainedRetentions[retainingID].retained = true;
-		}
-
-		/**
-		 * Directly releases composite.
-		 *
-		 * - Retaining composite's retained list gets the retained composite's retention counter decreased.
-		 * - Directly released composite's retainers list gets the retaining composite's retention state set to false.
-		 *   Contextually released composite will be destroyed.
-		 *   (release -> !retains -> destroyReleased -> !retained -> destroy)
-		 *
-		 * Each entry will be removed if redundant.
-		 */
-		void release(CompositeTypeSP retainedComposite) {
-			if(!retainedComposite || retainedComposite == shared_from_this()) {
-				return;
-			}
-
-			int retainingID = ownID,
-				retainedID = retainedComposite->ownID;
-			auto& retainingRetentions = retentions,
-				  retainedRetentions = retainedComposite->retentions;
-			auto retainingIt = retainingRetentions.find(retainedID),
-				 retainedIt = retainedRetentions.find(retainingID);
-
-			if(retainingIt != retainingRetentions.end() && retainingIt->second.retaining) {
-				retainingIt->second.retaining--;
-
-				if(!retainingIt->second.retained && !retainingIt->second.retaining) {
-					retainingRetentions.erase(retainingIt);
-				}
-			}
-			if(retainedIt != retainedRetentions.end() && !retains(retainedComposite)) {
-				retainedIt->second.retained = false;
-
-				if(!retainedIt->second.retaining) {
-					retainedRetentions.erase(retainedIt);
-				}
-
-				retainedComposite->destroyReleased();
-			}
-		}
-
-		/**
-		 * Directly retains or releases composites found in values, basing on:
-		 * - Current retention state - does not change if present in both values.
-		 * - Order - first released, second retained.
-		 *
-		 * Check `getValueComposites()` for details of search.
-		 */
-		void retainOrRelease(TypeSP oldRetainedValue, TypeSP newRetainedValue) {
-			auto ORC = interpreter->getValueComposites(oldRetainedValue),  // Old/new retained composites
-				 NRC = interpreter->getValueComposites(newRetainedValue);
-
-			for(auto oldRetainedComposite : ORC) if(!NRC.contains(oldRetainedComposite)) release(oldRetainedComposite);
-			for(auto newRetainedComposite : NRC) if(!ORC.contains(newRetainedComposite)) retain(newRetainedComposite);
-		}
-
-		/**
-		 * Directly retains composites found in value.
-		 *
-		 * Check `getValueComposites()` for details of search.
-		 */
-		void retain(TypeSP retainedValue) {
-			for(auto retainedComposite : interpreter->getValueComposites(retainedValue)) {
-				retain(retainedComposite);
-			}
-		}
-
-		/**
-		 * Directly releases composites found in value.
-		 *
-		 * Check `getValueComposites()` for details of search.
-		 */
-		void release(TypeSP retainedValue) {
-			for(auto retainedComposite : interpreter->getValueComposites(retainedValue)) {
-				release(retainedComposite);
-			}
-		}
-
-		/**
-		 * Returns a state of direct retention.
-		 *
-		 * Composite A is considered directly retained if it presents in composite B's retained IDs list.
-		 *
-		 * Formally this is the case when composite B uses composite A in its hierarchy, types,
-		 * imports, members or observers, but technically retain and release functions must be utilized
-		 * in corresponding places for this to work.
-		 */
-		bool retains(CompositeTypeSP retainedComposite) {
-			if(life == 2 || !retainedComposite) {
-				return false;
-			}
-
-			int retainedID = retainedComposite->ownID;
-
-			return retentions.count(retainedID) && retentions[retainedID].retaining;
-		}
-
-		/**
-		 * Returns a state of transitive retention.
-		 *
-		 * Composite A is considered transitively retained by composite B if they
-		 * are same composite or if composite B directly retains it (recursively).
-		 *
-		 * visitedIDs is used to exclude a retain cycles and redundant passes
-		 * from the lookup and is meant to be set internally only.
-		 */
-		bool retainsDistant(CompositeTypeSP retainedComposite, sp<unordered_set<int>> visitedIDs = SP<unordered_set<int>>()) {
-			if(life == 2 || !retainedComposite) {
-				return false;
-			}
-			if(retainedComposite == shared_from_this() || retains(retainedComposite)) {
-				return true;
-			}
-			for(int retainedID : getRetainedIDs()) {
-				if(!visitedIDs->contains(retainedID)) {
-					visitedIDs->insert(retainedID);
-
-					if(auto retainingComposite = interpreter->getComposite(retainedID); retainingComposite->retainsDistant(retainedComposite, visitedIDs)) {
-						return true;
-					}
-				}
-			}
-
-			return false;
-		}
-
-		/**
-		 * Returns a state of contextual retention.
-		 *
-		 * Composite is considered contextually retained if it is transitively retained by
-		 * the global namespace, a current scope composite or a current control trasfer value.
-		 */
-		bool isRetained() {
-			CompositeTypeSP retainingComposite,
-							retainedComposite = static_pointer_cast<CompositeType>(shared_from_this());
-
-			if(retainingComposite = interpreter->getValueComposite(interpreter->controlTransfer().value))	if(retainingComposite->retainsDistant(retainedComposite)) return true;
-			if(retainingComposite = interpreter->scope())													if(retainingComposite->retainsDistant(retainedComposite)) return true;
-		//	for(auto&& retainingComposite : interpreter->scopes())											if(retainingComposite->retainsDistant(retainedComposite)) return true;  // May be useful when "with" syntax construct will be added
-			if(retainingComposite = interpreter->getComposite(0))											if(retainingComposite->retainsDistant(retainedComposite)) return true;  // TODO: Check if this should be replaced with an own stack (each module have its Global) or ^^^ (scope stack), as I don't really know if current scope or current Global only will be sufficient for imports
-
-			return false;
-		}
 
 		CompositeTypeSP getHierarchy(const string& branch) {
 			return hierarchy.contains(branch) ? hierarchy[branch] : nullptr;
@@ -1464,9 +1609,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			(removeKey(forward<Keys>(restKeys)), ...);
 		}
 
-		bool hierarchyRetains(CompositeTypeSP retainedComposite) {
+		bool hierarchyRetains(CompositeTypeSP retainedType) {
 			for(const auto& [key, value] : hierarchy) {
-				if(value == retainedComposite) {
+				if(value == retainedType) {
 					return true;
 				}
 			}
@@ -1506,26 +1651,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 		CompositeTypeSP getScope() {
 			return hierarchy["scope"];
-		}
-
-		unordered_set<int> getRetentionsIDs(bool direction) const {
-			unordered_set<int> result;
-
-			for(const auto& [key, value] : retentions) {
-				if(direction ? value.retaining : value.retained) {
-					result.insert(key);
-				}
-			}
-
-			return result;
-		}
-
-		unordered_set<int> getRetainersIDs() const {
-			return getRetentionsIDs(false);
-		}
-
-		unordered_set<int> getRetainedIDs() const {
-			return getRetentionsIDs(true);
 		}
 
 		void setSelfLevels(CompositeTypeSP selfComposite) {
@@ -1694,10 +1819,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 			auto hierarchy = this->hierarchy;
 
-			hierarchy.erase("scope");									// Only object and inheritance chains
-			hierarchy.emplace("Global", interpreter->getComposite(0));	// Global-type
-		//	hierarchy.emplace("metaSelf", -1);							   Self-object or a type (descriptor) (probably not a simple ID but some kind of proxy)
-		//	hierarchy.emplace("arguments", -1);							   Function arguments array (should be in callFunction() if needed)
+			hierarchy.erase("scope");								// Only object and inheritance chains
+			hierarchy.emplace("Global", interpreter->getType(0));	// Global-type
+		//	hierarchy.emplace("metaSelf", -1);						   Self-object or a type (descriptor) (probably not a simple ID but some kind of proxy)
+		//	hierarchy.emplace("arguments", -1);						   Function arguments array (should be in callFunction() if needed)
 
 			if(hierarchy.contains(identifier)) {
 				overloads.push_back(SP<Overload>(
@@ -1724,35 +1849,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return overloads;
 		}
 
-		void findSubscriptOverloads(OverloadSearch& search, AccessMode mode) {
-			if(!search.candidates.size()) {
-				return;
-			}
-
-			OverloadSearch search_;
-
-			for(OverloadCandidate& candidate : search.candidates) {
-				if(candidate.overload->observers.get) {
-					continue;
-				}
-
-				if(TypeSP& value = candidate.overload->value) {
-					switch(value->ID) {
-						case TypeID::Dictionary:
-							search_.candidates.push_back(candidate);
-						break;
-						case TypeID::Composite:
-							auto compValue = static_pointer_cast<CompositeType>(value);
-
-							compValue->findOverloads(AccessSegment("subscript", false), search_, "scope", mode, true);
-						break;
-					}
-				}
-			}
-
-			search.candidates = search_.candidates;
-		}
-
 		using VisitedBranches = unordered_map<CompositeTypeSP, unordered_set<string>>;
 
 		/**
@@ -1761,7 +1857,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * Each "scope" is searched in the full order:
 		 * - Descent: sub, Sub – only when virtual overloads are present.
 		 * - Current – internally accompanies any other branch.
-		 * - Ascent: self, super, Self, Super, scope (only when a searched segment is not qualified).
+		 * - Ascent: self, super, Self, Super, scope (only when search is not qualified).
 		 *
 		 * Branches are processed with the rules:
 		 * - The order is well-defined and preserved.
@@ -1776,10 +1872,11 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		 * and/or do not require further processing as specific branches.
 		 */
 		void findOverloads(
-			AccessSegment segment,
+			const string& identifier,
 			OverloadSearch& search,
 			const string& branch = "scope",
 			AccessMode mode = AccessMode::Get,
+			bool qualified = false,
 			bool shadow = false,
 			sp<VisitedBranches> visited = SP<VisitedBranches>()
 		) {
@@ -1790,14 +1887,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			} else
 			if(!visited->at(composite).insert(branch).second) {
 				return;
-			}
-
-			string identifier;
-
-			switch(segment.component.index()) {
-				case 0:  identifier = get<0>(segment.component); break;
-				case 1:  identifier = "subscript";               break;
-				default: throw invalid_argument("Only chain and subscript access is allowed for a composite");
 			}
 
 			Member overloads = findLocalOverloads(identifier);
@@ -1815,7 +1904,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				branches.push_back("Self");
 				branches.push_back("Super");
 
-				if(!segment.isQualified) {
+				if(!qualified) {
 					branches.push_back("scope");
 				}
 			} else
@@ -1832,10 +1921,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 						search.candidates.push_back(OverloadCandidate(composite, overload));
 					}
 
-					if(mode == AccessMode::Get    && composite->chainObservers.get ||
-					   mode == AccessMode::Set    && composite->chainObservers.set ||
-					   mode == AccessMode::Delete && composite->chainObservers.delete_) {
-						search.observers = composite->chainObservers;
+					if(mode == AccessMode::Get    && composite->observers.get ||
+					   mode == AccessMode::Set    && composite->observers.set ||
+					   mode == AccessMode::Delete && composite->observers.delete_) {
+						search.observers = composite->observers;
 					}
 				} else
 				if(CompositeTypeSP chainedComposite = composite->getHierarchy(b)) {
@@ -1845,7 +1934,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 						continue;
 					}
 
-					chainedComposite->findOverloads(segment, search, b, mode, shadow, visited);
+					chainedComposite->findOverloads(identifier, search, b, mode, qualified, shadow, visited);
 				} else {
 					continue;
 				}
@@ -1898,107 +1987,9 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			overload->type = NT;
 			overload->value = value;
 
-			if(OV != NV) {
-				composite->retainOrRelease(OV, NV);
-			}
+			composite->retain(NV);
+			composite->release(OV);
 			*/
-		}
-
-		/**
-		 * var a: A {
-		 *		willGet
-		 *			get -> A
-		 *		 didGet
-		 *
-		 *		willSet(A)
-		 *			set(A)
-		 *		 didSet(A)
-		 *
-		 *		willDelete
-		 *			delete
-		 *		 didDelete
-		 * }
-		 *
-		 * chain {
-		 *		willGet(string)
-		 *			get(string) -> _?
-		 *		 didGet(string)
-		 *
-		 *		willSet(string, _?)
-		 *			set(string, _?)
-		 *		 didSet(string, _?)
-		 *
-		 *		willDelete(string)
-		 *			delete(string)
-		 *		 didDelete(string)
-		 * }
-		 *
-		 * subscript(A, B) -> C {
-		 *		willGet(A, B)
-		 *			get(A, B) -> C
-		 *		 didGet(A, B)
-		 *
-		 *		willSet(A, B, C)
-		 *			set(A, B, C)
-		 *		 didSet(A, B, C)
-		 *
-		 *		willDelete(A, B)
-		 *			delete(A, B)
-		 *		 didDelete(A, B)
-		 * }
-		 */
-		TypeSP applyOverloadAccess(OverloadSP overload, GetRequest GR) {
-			Observers& observers = overload->observers;
-			vector<TypeSP> arguments;
-			TypeSP value;
-
-			if(observers.willGet) {
-				observers.willGet->access(GetRequest(arguments));
-			}
-			if(observers.get) {
-				value = observers.get->access(GetRequest(arguments));
-			} else
-			if(overload) {
-				value = overload->value;
-			}
-			if(observers.didGet) {
-				observers.didGet->access(GetRequest(arguments));
-			}
-
-			return value;
-		}
-
-		void applyOverloadAccess(OverloadSP overload, SetRequest SR) {
-			Observers& observers = overload->observers;
-			vector<TypeSP> arguments = { SR.setValue };
-
-			if(observers.willSet) {
-				observers.willSet->access(GetRequest(arguments));
-			}
-			if(observers.set) {
-				observers.set->access(GetRequest(arguments));
-			} else
-			if(overload) {
-				overload->value = SR.setValue;
-			}
-			if(observers.didSet) {
-				observers.didSet->access(GetRequest(arguments));
-			}
-		}
-
-		void applyOverloadAccess(OverloadSP overload, DeleteRequest DR) {
-			Observers& observers = overload->observers;
-			vector<TypeSP> arguments;
-
-			if(observers.willDelete) {
-				observers.willDelete->access(GetRequest(arguments));
-			}
-			if(observers.delete_) {
-				observers.delete_->access(GetRequest(arguments));
-			}
-			if(observers.didDelete) {
-				observers.didDelete->access(GetRequest(arguments));
-			}
 		}
 	};
 
@@ -2065,10 +2056,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 					   parametersTypes;
 		TypeSP returnType;
 		struct Modifiers {
-			optional<bool> inits,
-						   deinits,
-						   awaits,
-						   throws;
+			optional<bool> inits, deinits, awaits, throws;
 		} modifiers;
 		bool liskov;  // Only for call-site checking
 
@@ -2516,7 +2504,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		println("createComposite("+title+")");
 		auto composite = SP<CompositeType>(shared_from_this(), type, title);
 
-		composites().push_back(composite);
+		types().push_back(composite);
 
 		if(scope) {
 			composite->setScope(scope);
@@ -2635,28 +2623,6 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		}
 
 		return nullptr;
-	}
-
-	/**
-	 * Returns a set of live composites found in value (recursively). Works with `CompositeType` and `DictionaryType`.
-	 */
-	unordered_set<CompositeTypeSP> getValueComposites(TypeSP value) {
-		unordered_set<CompositeTypeSP> result;
-
-		if(value && value->ID == TypeID::Dictionary) {
-			for(auto& [key, value_] : *static_pointer_cast<DictionaryType>(value)) {
-				auto keyComposites = getValueComposites(key),
-					 valueComposites = getValueComposites(value_);
-
-				result.insert(keyComposites.begin(), keyComposites.end());
-				result.insert(valueComposites.begin(), valueComposites.end());
-			}
-		} else
-		if(CompositeTypeSP composite = getValueComposite(value)) {
-			result.insert(composite);
-		}
-
-		return result;
 	}
 
 	// ----------------------------------------------------------------
@@ -2853,7 +2819,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				}
 			}
 
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(composite), AccessSegment(identifier) });
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath {
+				AccessSegment(composite),
+				AccessSegment(identifier, scope())
+			});
 		} else
 		if(type == "continueStatement") {
 			TypeSP value;
@@ -2940,7 +2909,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 			return SP<FunctionType>(genericParametersTypes, parametersTypes, returnType, modifiers);
 		} else
 		if(type == "identifier") {
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(scope()), AccessSegment(n->get<string>("value"), false) });
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath {
+				AccessSegment(scope()),
+				AccessSegment(n->get<string>("value"), nullptr, false)
+			});
 		} else
 		if(type == "ifStatement") {
 			if(n->empty("condition")) {
@@ -3029,7 +3001,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 		} else
 		if(type == "module") {
 			addControlTransfer();
-			addScope(getComposite(0) ?: createNamespace("Global"));
+			addScope(getType(0) ?: createNamespace("Global"));
 		//	addDefaultMembers(scope());
 			executeNodes(n->get<NodeArraySP>("statements")/*, (t) => t !== 'throw' ? 0 : -1*/);
 
@@ -3196,7 +3168,10 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 				args.push_back(argValue ? argValue->second : nullptr);
 			}
 
-			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath { AccessSegment(composite), AccessSegment(args) });
+			return SP<InoutType>(true, SP<NillableType>(PredefinedEAnyTypeSP), AccessPath {
+				AccessSegment(composite),
+				AccessSegment(args, scope())
+			});
 		} else
 		if(type == "throwStatement") {
 			auto value = executeNode(n->get("value"));
@@ -3361,7 +3336,7 @@ struct Interpreter : enable_shared_from_this<Interpreter> {
 
 	void clean() {
 		position = 0;
-		_composites = {};
+		_types = {};
 		_scopes = {};
 		_controlTransfers = {};
 	}

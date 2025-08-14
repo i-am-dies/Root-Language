@@ -92,8 +92,6 @@ namespace Grammar {
 
 	// ----------------------------------------------------------------
 
-	// FIXME: Expressions in statements like "if a {}" can be parsed like "if (call a with closure) then do nothing" instead of "if a then do block"
-
 	unordered_map<RuleRef, Rule> rules = {
 		{"argument", VariantRule({
 			NodeRule({
